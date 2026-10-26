@@ -1,0 +1,13 @@
+name = "dns"
+version = "0.1.0"
+defaultTargets = ["Dns", "Proofs", "dns"]
+
+[[lean_lib]]
+name = "Dns"
+
+[[lean_lib]]
+name = "Proofs"
+
+[[lean_exe]]
+name = "dns"
+root = "Main"
