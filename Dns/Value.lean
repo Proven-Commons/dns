@@ -1,30 +1,22 @@
 /-
-  The DNS message data model and the canonical printer. This
-  slice reads the header and the question section of a DNS
-  message, in the wire format of RFC 1035 sections 3 and 4. It
-  does not read resource records, and it does not read name
-  compression.
+  The DNS message data model and the canonical printer.
 
-  A message is a header and a list of questions. The header holds
-  the identifier and the flag fields of RFC 1035 section 4.1.1:
-  QR, the four bit opcode, AA, TC, RD, RA, and the four bit
-  RCODE. The reserved three flag bits are not held: the printer
-  writes them as zero, and the parser turns a message away when
-  one of them is set. The four section counts are not held
-  either: the printer fills the question count from the question
-  list and writes the other three as zero, and the parser turns
-  a message away when one of those three is nonzero.
+  A message holds the header fields and four sections: questions,
+  answer records, authority records, and additional records. The
+  header is the one in RFC 1035 section 4.1.1: an identifier, QR,
+  the four bit opcode, AA, TC, RD, RA, and the four bit RCODE.
+  The reserved three flag bits are not held. The printer writes
+  them as zero, and the parser turns a message away when one of
+  them is set. The four section counts are not held either. The
+  printer fills them from the four lists.
 
   Numbers are held as plain natural numbers, not as fixed width
-  types. The identifier, QTYPE, and QCLASS are the values of two
-  byte fields; the flag fields hold 0 or 1, and the opcode and
-  RCODE hold values of four bits. Well formedness, below, states
-  those bounds.
+  types. Well formedness states the wire bounds.
 
-  A question is a name, a QTYPE, and a QCLASS. A name is a list
-  of labels, and a label is a list of bytes. On the wire a name
-  is each label written as a length byte and its bytes, ended by
-  a zero byte.
+  Names in this model are always expanded. A name is a list of
+  labels, and a label is a list of bytes. Compression can occur
+  in bytes read by the parser, but it never occurs in this model
+  or in the printer. The printer writes every name in full.
 -/
 
 namespace Dns
@@ -65,10 +57,22 @@ structure Question where
   qclass : Nat
   deriving DecidableEq, Repr
 
-/-- A message: a header and its questions. -/
+/-- One resource record. Its data is opaque at this layer. -/
+structure Record where
+  name : Name
+  type : Nat
+  rclass : Nat
+  ttl : Nat
+  data : List UInt8
+  deriving DecidableEq, Repr
+
+/-- A whole message: a header and its four sections. -/
 structure Message where
   header : Header
   questions : List Question
+  answers : List Record
+  authorities : List Record
+  additionals : List Record
   deriving DecidableEq, Repr
 
 /-- A value as two bytes, big endian. The value is taken modulo
@@ -79,6 +83,16 @@ def be16 (n : Nat) : List UInt8 :=
 /-- The value of two bytes read big endian. -/
 def u16 (a b : UInt8) : Nat :=
   a.toNat * 256 + b.toNat
+
+/-- A value as four bytes, big endian. The value is taken modulo
+    2^32; callers only pass values below that. -/
+def be32 (n : Nat) : List UInt8 :=
+  [ (n / 16777216).toUInt8, (n / 65536).toUInt8,
+    (n / 256).toUInt8, n.toUInt8 ]
+
+/-- The value of four bytes read big endian. -/
+def u32 (a b c d : UInt8) : Nat :=
+  a.toNat * 16777216 + b.toNat * 65536 + c.toNat * 256 + d.toNat
 
 /-- The first flag byte: QR in the top bit, then the opcode in
     four bits, then AA, TC, and RD. -/
@@ -97,8 +111,8 @@ def printName : Name → List UInt8
   | [] => [0]
   | l :: ls => (l.length.toUInt8 :: l) ++ printName ls
 
-/-- The wire length of a name: one length byte per label, the
-    label bytes, and the final zero byte. -/
+/-- The wire length of an expanded name: one length byte per
+    label, the label bytes, and the final zero byte. -/
 def wireLen : Name → Nat
   | [] => 1
   | l :: ls => (l.length + 1) + wireLen ls
@@ -112,15 +126,29 @@ def printQuestions : List Question → List UInt8
   | [] => []
   | q :: qs => printQuestion q ++ printQuestions qs
 
-/-- The header in printed form, with the question count filled
-    in and the other three counts written as zero. -/
-def printHeader (h : Header) (qd : Nat) : List UInt8 :=
-  be16 h.id ++ [flags1 h, flags2 h] ++ be16 qd ++
-    be16 0 ++ be16 0 ++ be16 0
+/-- One record in printed form. The name is expanded. Then come
+    type, class, TTL, the data length, and the data. -/
+def printRecord (r : Record) : List UInt8 :=
+  printName r.name ++ be16 r.type ++ be16 r.rclass ++ be32 r.ttl ++
+    be16 r.data.length ++ r.data
 
-/-- A message in printed form. -/
+/-- The records in printed form, in order. -/
+def printRecords : List Record → List UInt8
+  | [] => []
+  | r :: rs => printRecord r ++ printRecords rs
+
+/-- The header in printed form, with all four counts supplied by
+    the caller. -/
+def printHeader (h : Header) (qd an ns ar : Nat) : List UInt8 :=
+  be16 h.id ++ [flags1 h, flags2 h] ++ be16 qd ++
+    be16 an ++ be16 ns ++ be16 ar
+
+/-- A whole message in printed form. Names are uncompressed. -/
 def print (m : Message) : List UInt8 :=
-  printHeader m.header m.questions.length ++ printQuestions m.questions
+  printHeader m.header m.questions.length m.answers.length
+      m.authorities.length m.additionals.length ++
+    printQuestions m.questions ++ printRecords m.answers ++
+    printRecords m.authorities ++ printRecords m.additionals
 
 /-- A well formed header: the identifier fits two bytes, each
     single flag field is 0 or 1, and the opcode and the RCODE
@@ -129,18 +157,34 @@ def WFHeader (h : Header) : Prop :=
   h.id < 65536 ∧ h.qr ≤ 1 ∧ h.opcode < 16 ∧ h.aa ≤ 1 ∧ h.tc ≤ 1 ∧
     h.rd ≤ 1 ∧ h.ra ≤ 1 ∧ h.rcode < 16
 
-/-- A well formed question: QTYPE and QCLASS fit two bytes,
-    every label holds 1 to 63 bytes, and the name fits the 255
-    byte wire bound. -/
+/-- A well formed expanded name: every label holds 1 to 63
+    bytes, and the expanded wire length fits the 255 byte
+    bound. -/
+def WFName (nm : Name) : Prop :=
+  (∀ l ∈ nm, 1 ≤ l.length ∧ l.length ≤ 63) ∧ wireLen nm ≤ 255
+
+/-- A well formed question: QTYPE and QCLASS fit two bytes, and
+    its name is well formed. -/
 def WFQuestion (q : Question) : Prop :=
-  q.qtype < 65536 ∧ q.qclass < 65536 ∧
-    (∀ l ∈ q.name, 1 ≤ l.length ∧ l.length ≤ 63) ∧
-    wireLen q.name ≤ 255
+  q.qtype < 65536 ∧ q.qclass < 65536 ∧ WFName q.name
+
+/-- A well formed record: type and class fit two bytes, TTL
+    fits four bytes, its name is well formed, and its data
+    length fits two bytes. -/
+def WFRecord (r : Record) : Prop :=
+  r.type < 65536 ∧ r.rclass < 65536 ∧ r.ttl < 4294967296 ∧
+    WFName r.name ∧ r.data.length < 65536
 
 /-- A well formed message: a well formed header, well formed
-    questions, and a question count that fits two bytes. -/
+    entries in all four sections, and each section count fits
+    two bytes. -/
 def WF (m : Message) : Prop :=
-  WFHeader m.header ∧ (∀ q ∈ m.questions, WFQuestion q) ∧
-    m.questions.length < 65536
+  WFHeader m.header ∧
+    (∀ q ∈ m.questions, WFQuestion q) ∧
+    (∀ r ∈ m.answers, WFRecord r) ∧
+    (∀ r ∈ m.authorities, WFRecord r) ∧
+    (∀ r ∈ m.additionals, WFRecord r) ∧
+    m.questions.length < 65536 ∧ m.answers.length < 65536 ∧
+    m.authorities.length < 65536 ∧ m.additionals.length < 65536
 
 end Dns

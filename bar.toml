@@ -1,0 +1,49 @@
+# Read by bar/check.py in Proven-Commons/mission.
+# See playbook/verified-bar.md there for what each field means.
+
+[project]
+name = "dns"
+# "in-progress" until every bar item passes, then "verified".
+status = "in-progress"
+page = "README.md"
+# GitHub handles of everyone who wrote the specification.
+spec_authors = ["abu-aska"]
+# The program people run. A change to it voids the approval.
+entry_points = ["Main.lean"]
+
+[spec]
+files = ["SPEC.md", "Spec.lean"]
+# The code under proof: the functions the statements are about.
+code = [
+  # The data types the statements are about.
+  "Dns.Label", "Dns.Name", "Dns.Header", "Dns.Question",
+  "Dns.Record", "Dns.Message",
+  # The byte forms and the printer.
+  "Dns.be16", "Dns.u16", "Dns.be32", "Dns.u32",
+  "Dns.flags1", "Dns.flags2", "Dns.printName", "Dns.wireLen",
+  "Dns.printQuestion", "Dns.printQuestions", "Dns.printRecord",
+  "Dns.printRecords", "Dns.printHeader", "Dns.print",
+  # Well formedness.
+  "Dns.WFHeader", "Dns.WFName", "Dns.WFQuestion",
+  "Dns.WFRecord", "Dns.WF",
+  # The length checked readers and the parser.
+  "Dns.getU16", "Dns.getU32", "Dns.takeBytes",
+  "Dns.parseNameGo", "Dns.parseNameIn", "Dns.parseName",
+  "Dns.parseQuestionIn", "Dns.parseQuestion",
+  "Dns.parseQuestionsIn", "Dns.parseQuestions",
+  "Dns.parseRecordIn", "Dns.parseRecord",
+  "Dns.parseRecordsIn", "Dns.parseRecords",
+  "Dns.parseHeader", "Dns.parse",
+]
+
+# One entry per approval, added in a pull request the reviewer approves.
+# [[spec.approval]]
+# reviewer = "github-handle"
+# date = "2026-11-02"
+# sha256 = "..."
+# record = "https://github.com/Proven-Commons/dns/pull/<n>"
+
+[tests]
+results = "tests/TEST-RESULTS.md"
+command = "python3 tests/run_tests.py"
+files = ["tests/run_tests.py"]
