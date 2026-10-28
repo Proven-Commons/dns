@@ -11,14 +11,14 @@ Written by `tests/run_tests.py`. Rerun it to check these numbers.
 - Slice 1 mutations (every truncation, every single byte flip, targeted): 64 of 64 agreements
 - Full fixed cases, parse: 5 of 5 agreements
 - Full fixed cases, sections: 5 of 5 agreements
-- Full rejections (parse and sections): 14 of 14 agreements
+- Full rejections (parse and sections): 16 of 16 agreements
 - Random whole messages, parse: 300 of 300 agreements
 - Random whole messages, sections: 300 of 300 agreements
 - Compressed random and suffix messages, parse: 302 of 302 agreements
 - Compressed random and suffix messages, sections: 302 of 302 agreements
 - Malformed requests answered error: 17 of 17
 - dnspython cross checks: 0 run (module absent)
-- Differential inputs: 1709
-- Differential agreements: 1709
+- Differential inputs: 1711
+- Differential agreements: 1711
 - Named differences: none
 - Failures: 0

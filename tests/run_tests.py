@@ -32,9 +32,10 @@ Slice 2 sections:
 
 4. Whole message rejections: a pointer to itself, a forward
    pointer, a pointer past the end, a pointer into the middle
-   of a label, a reserved length form in a record name, a data
-   length running past the end, and an expanded name over 255
-   bytes reached by chaining.
+   of a label, a cycle that passes through a label, a reserved
+   length form in a record name, a data length running past
+   the end, and an expanded name over 255 bytes reached by
+   chaining.
 
 5. Random whole messages (mixed sections), printed and read
    back, and the same messages run through a harness
@@ -743,6 +744,28 @@ def rejection_cases():
         wire += be16(1) + be16(1)
         prev = start
     cases.append(("chain-over-255", wire))
+
+    # A cycle that passes through a label, the reviewer's
+    # shape. The header bytes double as a name fragment: at
+    # offset 5 sit the bytes 04 61 62 63 64, the label abcd,
+    # and at offset 10 the pointer C0 05 back to offset 5.
+    # (Read as header fields those bytes give QDCOUNT 4 and
+    # large answer, authority, and additional counts, which
+    # do not matter: the first name read already fails.) The
+    # question name at offset 12 is a pointer to offset 5.
+    # Reading it walks label, pointer, label, pointer, and
+    # the strictly backwards rule alone does not stop that:
+    # the pointer at offset 10 does point back to offset 5.
+    # What turns it away is the 255 byte budget. Each pass
+    # through the label spends 5 bytes, so the budget is
+    # spent after 51 passes, at step 104 of this 18 byte
+    # message, with 171 of the 275 fuel steps still unspent.
+    # The oracle rejects it by the same budget rule, and both
+    # operations must answer none.
+    wire = header_bytes(0, 0, 0, 0, 0, 0, 0, 0, 4,
+                        an=0x6162, ns=0x6364, ar=0xC005)
+    wire += pointer(5) + be16(1) + be16(1)
+    cases.append(("pointer-cycle-through-label", wire))
     return cases
 
 

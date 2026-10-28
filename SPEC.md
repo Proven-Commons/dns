@@ -57,14 +57,19 @@ of items:
 - A length byte with exactly one top bit set is a reserved
   form. It turns the message away.
 
-Pointer safety, enforced while reading:
+Pointer safety, enforced while reading. No single rule
+below is the whole story. Termination and rejection come
+from the rules together:
 
 - The offset is strictly less than the position of the
   pointer's first byte. A pointer can only point backwards.
-  In a chain that jumps from pointer straight to pointer,
-  each step's target is the next pointer's position, so the
-  targets strictly decrease, step by step, toward the start
-  of the message.
+  That rule on its own does not stop a cycle. A pointer can
+  aim back at a label, and the bytes after that label can run
+  forward again to the same pointer, so reading would walk
+  label, pointer, label, pointer, without end if nothing
+  else stopped it. Only in a chain that jumps from pointer
+  straight to pointer do the targets strictly decrease, step
+  by step, toward the start of the message.
 - The offset lies inside the message. This follows from the
   rule above, and is checked as well.
 - The bytes at the offset are read by these same rules, so a
@@ -74,9 +79,23 @@ Pointer safety, enforced while reading:
   (one length byte per label, the label bytes, and the final
   zero), stays within 255 bytes. Labels read after a jump
   count toward the same budget as labels read before it.
+  This budget is what turns away the label cycle described
+  above: each pass through a label spends its length byte
+  and its bytes from the budget, so after finitely many
+  passes the budget is spent and the reading is turned away.
+  For a four byte label the spend is 5 bytes a pass, so the
+  255 byte budget runs out after 51 passes, well before the
+  step budget below.
 - A step budget, the message length plus 257, also falls at
-  every item read. A reading that would walk in a circle
+  every item read. It is a second bound: a reading that
+  keeps spending steps without finishing, including a cycle
+  whose steps add little or nothing to the expanded name,
   spends it and is turned away.
+
+So a pointer walk always ends, with a name or with a
+rejection: the backwards rule limits where a pointer may
+aim, and the 255 byte budget and the step budget between
+them end every walk that does not finish.
 
 ## Questions
 

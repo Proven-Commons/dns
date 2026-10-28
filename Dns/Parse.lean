@@ -8,27 +8,42 @@
   The position of a byte in the suffix is the length of the
   whole message minus the length of the suffix.
 
-  Pointer safety is enforced in `parseNameGo`:
+  Pointer safety is enforced in `parseNameGo`. No single
+  rule below is the whole story. Termination and rejection
+  come from the rules together:
 
   - A pointer is two bytes with both top bits set. A byte with
     exactly one top bit set is a reserved form and is rejected.
   - The pointer target is strictly less than the position of
     the pointer's first byte. A pointer therefore points
-    backwards. A chain that jumps from pointer straight to
-    pointer has strictly decreasing target offsets.
+    backwards. That rule on its own does not stop a cycle:
+    a pointer can aim back at a label, and the bytes after
+    that label can run forward again to the same pointer, so
+    reading would walk label, pointer, label, pointer,
+    without end if nothing else stopped it. Only a chain that
+    jumps from pointer straight to pointer has strictly
+    decreasing target offsets.
   - The target lies inside the message, because it is less than
     that pointer position.
   - The bytes at the target are read by the same name rules.
   - The remaining expanded-name budget travels through a jump.
     Labels read at the target count toward the same 255 byte
-    expanded wire limit as labels read before the jump.
+    expanded wire limit as labels read before the jump. This
+    budget is what turns away the label cycle above: each
+    pass through a label spends its length byte and its bytes
+    from the budget, so after finitely many passes the budget
+    is spent and the reading is rejected. For a four byte
+    label the spend is 5 bytes a pass, so the budget runs out
+    after 51 passes, well before the fuel below.
   - A fuel count also falls at every label, zero, or pointer
     step. The fuel starts at the message length plus 257. A
     successful walk through a deterministic byte graph cannot
     repeat a starting position without looping forever, so it
     has at most one step per byte position, plus room for one
-    step per possible byte of an expanded name. Fuel therefore
-    makes hostile cycles end in rejection.
+    step per possible byte of an expanded name. Fuel is a
+    second bound: it ends any walk that keeps spending steps
+    without finishing, including a cycle whose steps add
+    little or nothing to the expanded name.
 
   A record holds its data as opaque bytes. The parser does not
   look inside record data, including when record data happens
