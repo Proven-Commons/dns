@@ -8,6 +8,9 @@ name = "Dns"
 [[lean_lib]]
 name = "Proofs"
 
+[[lean_lib]]
+name = "Spec"
+
 [[lean_exe]]
 name = "dns"
 root = "Main"

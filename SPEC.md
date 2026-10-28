@@ -183,3 +183,25 @@ Two operations:
   `.`, each label written as its byte codes split by `-`.
   Every name in the summary is expanded, however it was
   written on the wire.
+
+## Properties and their theorems
+
+Each property a reader can check in the page (`README.md`)
+names its theorem. The theorems are stated in `Spec.lean`
+and proved in `Proofs/SpecProofs.lean`. The refusal theorems
+are single inputs, one for each named rejection case in the
+test harness; the tests in `tests/` cover each rule on many
+more inputs.
+
+| Property | Theorem |
+|----------|---------|
+| Parsing the printed form of a well formed message gives the message back, all four sections | `Spec.parse_print` |
+| Parsing the printed form of a well formed question only message gives the message back | `Spec.parse_print_question_only` |
+| A pointer that aims at its own position is refused | `Spec.rejects_pointer_self` |
+| A pointer that aims forward is refused | `Spec.rejects_pointer_forward` |
+| A pointer whose target lies past the end of the message is refused | `Spec.rejects_pointer_past_end` |
+| A pointer into the middle of a label is refused | `Spec.rejects_pointer_mid_label` |
+| A reserved length form in a record name is refused | `Spec.rejects_reserved_in_record` |
+| A record data length that runs past the end of the message is refused | `Spec.rejects_data_past_end` |
+| An expanded name over 255 bytes, reached by chaining pointers, is refused | `Spec.rejects_chain_over_255` |
+| A pointer cycle that passes through a label is refused: the 255 byte budget turns it away | `Spec.rejects_pointer_cycle_through_label` |
