@@ -4,7 +4,7 @@ A parser and printer for the header and question section of a
 DNS message, in Lean, following RFC 1035 sections 3 and 4. The
 definitions are in `Dns/Value.lean` (the data model and the
 printer) and `Dns/Parse.lean` (the parser). The proof is in
-`Proofs/RoundTrip.lean`. This slice reads no resource records
+`Dns/Proofs/RoundTrip.lean`. This slice reads no resource records
 and no name compression.
 
 ## What is proved

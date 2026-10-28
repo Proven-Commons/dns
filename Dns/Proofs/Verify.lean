@@ -6,6 +6,6 @@
   the verified bar.
 -/
 
-import Proofs.RoundTrip
+import Dns.Proofs.RoundTrip
 
 #print axioms Dns.Proofs.parse_print
