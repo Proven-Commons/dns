@@ -54,6 +54,15 @@ judges the answers, and the results file lists every
 difference from it, each explained by a named rule; a
 difference no named rule explains is a failure.
 
+`python3 tests/planted_bugs.py` plants ten bugs in the
+parser and printer, one at a time, each in a scratch copy
+of the project. For each it records, in
+`tests/PLANTED-BUGS.md`, which statements of `Spec.lean`
+the changed code makes false and how many failures the
+tests find. A statement over every input is checked there
+on a few instances only, so the record can show such a
+statement false, never true.
+
 ## What is proved
 
 Each claim below names the theorem behind it. The
@@ -225,5 +234,9 @@ are about.
    build clean, and `lake env lean Proofs/Verify.lean`
    prints the axiom list for the headline round trip
    theorem.
-4. Read `SPEC.md` against RFC 1035 and check the pinned
+4. `python3 tests/planted_bugs.py`: each planted bug,
+   with the statements it makes false and the test
+   failures it causes, written to
+   `tests/PLANTED-BUGS.md`.
+5. Read `SPEC.md` against RFC 1035 and check the pinned
    readings are the ones you want.
