@@ -16,7 +16,8 @@ model are always expanded, and the printer never writes
 compression.
 
 The statements a reviewer approves are in `Spec.lean`,
-with their proofs in `Proofs/SpecProofs.lean`. No reviewer
+with the definitions they use in `Spec/Defs.lean` and
+their proofs in `Proofs/SpecProofs.lean`. No reviewer
 has approved them yet, so this project is not called
 verified.
 
@@ -65,9 +66,9 @@ where they end in `sorry`) and proved in
 |-------|---------|
 | Parsing the printed form of a well formed message gives the message back, all four sections. | `Spec.parse_print` |
 | The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Spec.parse_print_question_only` |
-| The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Spec.reads_rfc_4_1_4` |
 | For every header whose Z bit (0x40 of the fourth byte) is clear, the fields are read from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give them: AD (0x20) and CD (0x10) are read into the header, not turned away. | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes. | `Spec.rejects_z_bit` |
+| The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Spec.reads_rfc_4_1_4` |
 | A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
 | A pointer that aims forward, at a name later in the message, is refused, on an input where no other rule refuses it: the first question's name points at the second's. | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused. | `Spec.rejects_pointer_past_end` |
@@ -87,7 +88,8 @@ section count fits two bytes, QTYPE, QCLASS, TYPE, and CLASS
 fit two bytes, TTL fits four bytes, each record's data
 length fits two bytes, every label of every expanded name
 holds 1 to 63 bytes, and every expanded name fits the 255
-byte wire bound. The full list is in `SPEC.md`.
+byte wire bound. The full list is in `SPEC.md`, and the
+definition, `Spec.WF`, in `Spec/Defs.lean`.
 
 The round trip theorems rest on the proofs in
 `Proofs/RoundTrip.lean`, where they are
@@ -98,8 +100,9 @@ the standard axioms only (`propext`, `Classical.choice`,
 `#print axioms`, or by running
 `lake env lean Proofs/Verify.lean`, which prints the axiom
 list for the headline theorem. The two header theorems
-hold for every input. The other refusal theorems are single
-inputs checked in the kernel with `decide +kernel`.
+hold for every input. The other theorems, refusals and
+readings, are about one input each, checked in the kernel
+with `decide +kernel`.
 Under the round trips, the steps are proved one by one in
 the same file: the two and four byte numbers both ways, the
 name reader on printed names, questions and records on

@@ -27,15 +27,16 @@ Slice 2 sections:
    example placed in a real message (the first name at offset
    12, the second name a label plus a pointer back to offset
    12), an answer record whose name is a bare pointer to the
-   question name, a pointer chain of length two, a name that
-   follows 16 pointers (the limit), and records in the
-   authority and additional sections. Checked through both
+   question name, a pointer chain of length two, a pointer
+   into the middle of a label, a pointer into the name being
+   read, a name that follows 16 pointers (the limit), and
+   records in the authority and additional sections. Checked through both
    the `parse` operation (the canonical reprint, names
    expanded) and the `sections` operation (the summary text).
 
 4. Whole message rejections: a pointer to itself, a forward
-   pointer, a pointer past the end, a pointer into the middle
-   of a label, a cycle that passes through a label (ended by
+   pointer, a pointer past the end, a pointer onto a reserved
+   length form inside a label, a cycle that passes through a label (ended by
    the 16 pointer limit) and one through a 63 byte label
    (ended by the 255 byte budget), a reserved length form in
    a record name, a data length running past the end, an

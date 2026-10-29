@@ -88,6 +88,8 @@ from the rules together:
   inside the name being read: no rule forbids either, and
   the bytes there are read as a name. When the byte there is
   a reserved form, the message is turned away for that.
+  (dnspython refuses a pointer into the name being read; the
+  test results name that difference.)
 - One name follows at most 16 pointers. A 17th turns the
   message away. dnspython uses the same limit (Go's
   `x/net/dns/dnsmessage` uses 10). The limit ends every
@@ -154,7 +156,8 @@ of the message value, with all four sections.
 slice's result as a corollary, for a message whose answer,
 authority, and additional sections are empty.
 
-Well formed means: the header fields fit their widths (the
+Well formed (`Spec.WF`, in `Spec/Defs.lean`) means: the
+header fields fit their widths (the
 identifier in two bytes, QR, AA, TC, RD, RA, AD, and CD each 0
 or 1, the opcode and the RCODE in four bits); each section count
 fits two bytes; QTYPE, QCLASS, TYPE, and CLASS fit two bytes;
@@ -217,10 +220,10 @@ Two operations:
 Each property a reader can check in the page (`README.md`)
 names its theorem. The theorems are stated in `Spec.lean`
 and proved in `Proofs/SpecProofs.lean`. The two header
-theorems hold for every input. The other refusal theorems
-are single inputs, one for each named rejection case in the
-test harness; the tests in `tests/` cover each rule on many
-more inputs.
+theorems hold for every input. The others after the round
+trips are single inputs, each a named case in the test
+harness; the tests in `tests/` cover each rule on many more
+inputs.
 
 | Property | Theorem |
 |----------|---------|
@@ -233,7 +236,7 @@ more inputs.
 | A pointer that aims forward is refused, on an input no other rule refuses (the first question's name points at the second's) | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused | `Spec.rejects_pointer_past_end` |
 | A pointer whose target byte is a reserved length form is refused (here a byte inside a label) | `Spec.rejects_pointer_onto_reserved_form` |
-| A pointer into the middle of a label is read like any other target when the bytes there read as a name | `Spec.reads_pointer_mid_label` |
+| A pointer into the middle of a label is read like any other target when the bytes there read as a name (one input) | `Spec.reads_pointer_mid_label` |
 | A reserved length form in a record name is refused | `Spec.rejects_reserved_in_record` |
 | A record data length that runs past the end of the message is refused | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused | `Spec.rejects_chain_over_255` |

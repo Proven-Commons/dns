@@ -108,15 +108,17 @@ theorem Spec.reads_rfc_4_1_4 :
                              qtype := 1, qclass := 1 }],
              answers := [], authorities := [], additionals := [] } := sorry
 
-/-! ## Refused inputs
+/-! ## Single inputs at the name and record rules
 
-Single inputs the parser refuses, one for each headline rule
-of `SPEC.md`. Each input is one of the named rejection cases
-in the test harness, built there with its own builders, and
-stands here byte for byte the same. The differential tests
-cover these rules on many more inputs; these statements pin
-them so a reader of the specification can check each rule
-against one concrete case. -/
+Single inputs, one for each headline rule of `SPEC.md`: most
+are refused, and two are read where a reader might expect a
+refusal (a pointer into a label, and a name at the pointer
+limit). Each input is one of the named cases in the test
+harness, built there with its own builders, and stands here
+byte for byte the same. The differential tests cover these
+rules on many more inputs; these statements pin them so a
+reader of the specification can check each rule against one
+concrete case. -/
 
 
 /-- A pointer that aims at its own position is refused.
