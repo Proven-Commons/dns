@@ -32,8 +32,9 @@ Slice 2 sections:
    12), an answer record whose name is a bare pointer to the
    question name, a pointer chain of length two, a pointer
    into the middle of a label, a pointer into the name being
-   read, a name that follows 16 pointers (the limit), and
-   records in the authority and additional sections. Checked through both
+   read, a name that follows 16 pointers (the limit), the
+   same with a label between each two pointers, and records
+   in the authority and additional sections. Checked through both
    the `parse` operation (the canonical reprint, names
    expanded) and the `sections` operation (the summary text).
 
@@ -44,9 +45,9 @@ Slice 2 sections:
    (ended by the 255 byte budget), a reserved length form in
    a record name, a data length running past the end, an
    expanded name over 255 bytes reached by chaining, a name
-   that follows 17 pointers, and a 65,523 byte message whose
-   4,095 answer names each point into an 8,180 pointer
-   chain.
+   that follows 17 pointers, the same with a label between
+   each two pointers, and a 65,523 byte message whose 4,095
+   answer names each point into an 8,180 pointer chain.
 
 5. Random whole messages (mixed sections), printed and read
    back, and the same messages run through a harness
@@ -771,6 +772,22 @@ def hop_chain(hops):
     return wire
 
 
+def label_hop_chain(hops):
+    """A query of hops + 1 questions whose last name follows
+    `hops` pointers with a label between each two. The first
+    question's name is the label a at offset 12. Each later
+    question's name is one label (b, c, and so on) and a
+    pointer to the name of the question before."""
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, hops + 1)
+    prev = len(wire)
+    wire += question_bytes([b"a"], 1, 1)
+    for i in range(hops):
+        start = len(wire)
+        wire += bytes([1, 98 + i]) + pointer(prev) + be16(1) + be16(1)
+        prev = start
+    return wire
+
+
 def long_pointer_chain(links, names):
     """A message whose first answer's data is a chain of
     `links` pointers, each to the one before, the first to the
@@ -861,6 +878,13 @@ def full_fixed_cases():
         ([b"a"], PRIVATE_TYPE, 1, 0, b""),
     ]
     cases.append(("sixteen-hops", chain, model))
+
+    # A name that follows 16 pointers with a label between each
+    # two: read. The last of the 17 questions reads as q.p.o
+    # and on down to a.
+    names = [[bytes([97 + k]) for k in range(i, -1, -1)] for i in range(17)]
+    model = qmodel(7, QUERY, [(n, 1, 1) for n in names])
+    cases.append(("sixteen-hops-through-labels", label_hop_chain(16), model))
 
     # Records in the authority and additional sections, built
     # plainly by the model builder.
@@ -1005,6 +1029,22 @@ def rejection_cases():
 
     # A name that follows 17 pointers, one past the limit.
     cases.append(("seventeen-hops", hop_chain(17)))
+
+    # A name that follows 17 pointers with a label between each
+    # two. The pointer count runs on across the labels, so the
+    # 17th pointer is refused; a count that started again at
+    # each label would read the name, whose expanded form takes
+    # only 37 of the 255 budget bytes. The cycle cases above
+    # cannot show that, since the budget refuses them too.
+    wire = label_hop_chain(17)
+    assert wire.hex() == (
+        "000701000012000000000000016100000100010162c00c000100010163c013"
+        "000100010164c01b000100010165c023000100010166c02b000100010167c0"
+        "33000100010168c03b000100010169c04300010001016ac04b00010001016b"
+        "c05300010001016cc05b00010001016dc06300010001016ec06b00010001016f"
+        "c073000100010170c07b000100010171c083000100010172c08b00010001"
+    )
+    cases.append(("seventeen-hops-through-labels", wire))
 
     # The re-review's 65,523 byte message: one record's data
     # holds a chain of 8,180 backward pointers, and 4,095

@@ -137,9 +137,10 @@ theorem Spec.reads_rfc_4_1_4 :
 /-! ## Single inputs at the name and record rules
 
 Single inputs, one for each headline rule of `SPEC.md`: most
-are refused, and two are read where a reader might expect a
+are refused, and three are read where a reader might expect a
 refusal (a pointer into a label, and a name at the pointer
-limit). Each input is one of the named cases in the test
+limit, in two shapes). A refusal statement says that its
+input is refused, not which rule refuses it. Each input is one of the named cases in the test
 harness, built there with its own builders, and stands here
 byte for byte the same. The differential tests cover these
 rules on many more inputs; these statements pin them so a
@@ -266,9 +267,14 @@ theorem Spec.rejects_chain_over_255 :
     stands at offset 10, and the question name at offset
     12 is that same pointer. Reading walks label,
     pointer, label, pointer; the backwards rule alone
-    does not stop it. The 16 pointer limit turns it away
-    at the 17th pointer, after 16 passes that spent 80 of
-    the 255 budget bytes. -/
+    does not stop it. The statement says only that the
+    message is refused. In this parser the 16 pointer
+    limit refuses it, at the 17th pointer, after 16
+    passes that spent 80 of the 255 budget bytes; a
+    parser without the limit would still refuse it, by
+    the budget, after 51 passes. That the pointer count
+    runs on across labels is pinned on its own input by
+    `Spec.rejects_seventeen_hops_through_labels`. -/
 theorem Spec.rejects_pointer_cycle_through_label :
     (parse ([0, 0, 0, 0, 0, 4, 97, 98, 99, 100, 192, 5,
       192, 5, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
@@ -300,3 +306,47 @@ theorem Spec.rejects_seventeen_hops :
       45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
       57, 192, 59, 192, 61, 255, 0, 0, 1, 0, 0, 0,
       0, 0, 0] : List UInt8)).isSome = false := sorry
+
+/-- A name that follows 16 pointers with a label between each
+    two is read. The message holds 17 questions. The first
+    question's name is the label a, at offset 12. Each later
+    question's name is one label, b, c, and so on to q, and a
+    pointer to the name of the question before. Reading the
+    last name, q.p.o and on down to a, follows 16 pointers,
+    and its expanded form takes 35 of the 255 budget bytes. -/
+theorem Spec.accepts_sixteen_hops_through_labels :
+    (parse ([0, 7, 1, 0, 0, 17, 0, 0, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
+      1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
+      100, 192, 27, 0, 1, 0, 1, 1, 101, 192, 35, 0,
+      1, 0, 1, 1, 102, 192, 43, 0, 1, 0, 1, 1,
+      103, 192, 51, 0, 1, 0, 1, 1, 104, 192, 59, 0,
+      1, 0, 1, 1, 105, 192, 67, 0, 1, 0, 1, 1,
+      106, 192, 75, 0, 1, 0, 1, 1, 107, 192, 83, 0,
+      1, 0, 1, 1, 108, 192, 91, 0, 1, 0, 1, 1,
+      109, 192, 99, 0, 1, 0, 1, 1, 110, 192, 107, 0,
+      1, 0, 1, 1, 111, 192, 115, 0, 1, 0, 1, 1,
+      112, 192, 123, 0, 1, 0, 1, 1, 113, 192, 131, 0,
+      1, 0, 1] : List UInt8)).isSome = true := sorry
+
+/-- A name that follows 17 pointers with a label between each
+    two is refused: the same shape as above with an 18th
+    question, the label r and a pointer to the 17th. The
+    pointer count runs on across the labels between the
+    pointers; a count that started again at each label would
+    read this name, whose expanded form takes only 37 of the
+    255 budget bytes. -/
+theorem Spec.rejects_seventeen_hops_through_labels :
+    (parse ([0, 7, 1, 0, 0, 18, 0, 0, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
+      1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
+      100, 192, 27, 0, 1, 0, 1, 1, 101, 192, 35, 0,
+      1, 0, 1, 1, 102, 192, 43, 0, 1, 0, 1, 1,
+      103, 192, 51, 0, 1, 0, 1, 1, 104, 192, 59, 0,
+      1, 0, 1, 1, 105, 192, 67, 0, 1, 0, 1, 1,
+      106, 192, 75, 0, 1, 0, 1, 1, 107, 192, 83, 0,
+      1, 0, 1, 1, 108, 192, 91, 0, 1, 0, 1, 1,
+      109, 192, 99, 0, 1, 0, 1, 1, 110, 192, 107, 0,
+      1, 0, 1, 1, 111, 192, 115, 0, 1, 0, 1, 1,
+      112, 192, 123, 0, 1, 0, 1, 1, 113, 192, 131, 0,
+      1, 0, 1, 1, 114, 192, 139, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry

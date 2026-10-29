@@ -78,9 +78,11 @@ where they end in `sorry`) and proved in
 | A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Spec.rejects_reserved_in_record` |
 | A record whose data length runs past the end of the message is refused. | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused. | `Spec.rejects_chain_over_255` |
-| A pointer cycle that passes through a label is refused: the 16 pointer limit turns it away. | `Spec.rejects_pointer_cycle_through_label` |
+| A pointer cycle that passes through a label is refused. The theorem does not say which rule refuses it (see below). | `Spec.rejects_pointer_cycle_through_label` |
 | A name that follows 16 pointers, the limit, is read. | `Spec.accepts_sixteen_hops` |
 | A name that follows 17 pointers is refused. | `Spec.rejects_seventeen_hops` |
+| A name that follows 16 pointers with a label between each two is read. | `Spec.accepts_sixteen_hops_through_labels` |
+| A name that follows 17 pointers with a label between each two is refused, though its expanded form takes only 37 of the 255 budget bytes: the pointer count runs on across labels. | `Spec.rejects_seventeen_hops_through_labels` |
 
 A message is well formed when its header fields fit their
 widths (the identifier in two bytes, QR, AA, TC, RD, RA, AD,
@@ -133,6 +135,16 @@ are about.
   each; the differential tests check it on many more,
   and the results file counts how many of them hold a
   pointer.
+- Which rule refuses a refused input. Each refusal
+  theorem says that its input is refused, not why. In
+  particular `Spec.rejects_pointer_cycle_through_label`
+  would hold for a parser without the pointer limit too,
+  since the 255 byte budget also ends that cycle. That
+  the pointer count runs on across labels is stated on
+  its own input, `Spec.rejects_seventeen_hops_through_labels`,
+  where the budget leaves the name alone; the comments in
+  `Dns/Parse.lean` and `SPEC.md` say which rule ends each
+  loop, as a reading of the code, not as a theorem.
 - A byte for byte round trip on compressed input. A
   parsed message prints uncompressed, so its printed form
   need not equal a compressed input. No such claim is

@@ -91,8 +91,10 @@ from the rules together:
   (dnspython refuses a pointer into the name being read; the
   test results name that difference.)
 - One name follows at most 16 pointers. A 17th turns the
-  message away. dnspython uses the same limit (Go's
-  `x/net/dns/dnsmessage` uses 10). The limit ends every
+  message away. Every pointer the name follows counts,
+  wherever it stands: the count runs on across the labels
+  read between pointers. dnspython uses the same limit
+  (Go's `x/net/dns/dnsmessage` uses 10). The limit ends every
   cycle by the 17th pointer at the latest, the label cycle
   above included: a cycle through a four byte label is
   turned away at its 17th pointer, after 16 passes. It also
@@ -179,6 +181,16 @@ instead:
   header (`Spec.parse_reads_header`,
   `Spec.parseHeader_fields`, `Spec.rejects_z_bit`), the
   refusal theorems pin one input each.
+- Which rule refuses a refused input. A refusal theorem
+  says that its input is refused, not why. The account
+  above of which bound ends which loop is a reading of the
+  code in `Dns/Parse.lean`. In particular
+  `Spec.rejects_pointer_cycle_through_label` would hold
+  for a parser without the pointer limit, since the
+  budget also ends that cycle; that the pointer count runs
+  on across labels is stated on an input of its own,
+  `Spec.rejects_seventeen_hops_through_labels`, which the
+  budget leaves alone.
 
 A byte for byte round trip on compressed input is not
 claimed either: a parsed message prints uncompressed, so its
@@ -247,6 +259,8 @@ inputs.
 | A reserved length form in a record name is refused | `Spec.rejects_reserved_in_record` |
 | A record data length that runs past the end of the message is refused | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused | `Spec.rejects_chain_over_255` |
-| A pointer cycle that passes through a label is refused: the 16 pointer limit turns it away | `Spec.rejects_pointer_cycle_through_label` |
+| A pointer cycle that passes through a label is refused (the theorem does not say which rule refuses it) | `Spec.rejects_pointer_cycle_through_label` |
 | A name that follows 16 pointers, the limit, is read | `Spec.accepts_sixteen_hops` |
 | A name that follows 17 pointers is refused | `Spec.rejects_seventeen_hops` |
+| A name that follows 16 pointers with a label between each two is read | `Spec.accepts_sixteen_hops_through_labels` |
+| A name that follows 17 pointers with a label between each two is refused, though its expanded form takes only 37 budget bytes: the count runs on across labels | `Spec.rejects_seventeen_hops_through_labels` |

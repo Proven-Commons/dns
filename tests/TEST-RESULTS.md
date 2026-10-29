@@ -6,7 +6,7 @@ the strict oracle's. Rerun it to check these numbers.
 
 - Oracle: the strict reading of SPEC.md in tests/run_tests.py, on Python 3.13.17; cross-checked against dnspython 2.9.1, counted apart
 - Seed: 20261026
-- Inputs: 8231
+- Inputs: 8235
 - Failures: 0
 - Lean: Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)
 
@@ -16,9 +16,9 @@ Inputs by section, with the answers that agree with the oracle:
   - Slice 1 fixed cases, sections: 20 of 20
   - Slice 1 random well formed messages: 400 of 400
   - Slice 1 mutations (every truncation, every single byte flip, targeted): 66 of 66
-  - Full fixed cases, parse: 8 of 8
-  - Full fixed cases, sections: 8 of 8
-  - Full rejections (parse and sections): 22 of 22
+  - Full fixed cases, parse: 9 of 9
+  - Full fixed cases, sections: 9 of 9
+  - Full rejections (parse and sections): 24 of 24
   - Random whole messages, parse: 300 of 300
   - Random whole messages, sections: 300 of 300
   - Compressed random and suffix messages, parse: 302 of 302
@@ -26,12 +26,12 @@ Inputs by section, with the answers that agree with the oracle:
   - Mutations of the compressed messages at their pointers, parse: 6464 of 6464
   - Malformed requests, answered error: 17 of 17
 
-In all, 8231 of 8231 answers agree.
+In all, 8235 of 8235 answers agree.
 
 Pointers:
 
   - Compressed messages holding a pointer: 259 of 302, 808 pointers in all
-  - Inputs whose reading follows at least one pointer: 5195 of 8231
+  - Inputs whose reading follows at least one pointer: 5199 of 8235
 
 ## Cross-check against dnspython
 
@@ -61,8 +61,8 @@ A disagreement is a named difference when the strict oracle, with the
 named rules changed to read as dnspython reads, gives dnspython's
 answer. Any other disagreement is a failure, counted above.
 
-- Name judge: dnspython's wire parser and name reader on every `parse` input: 7571 judged, 7562 agree, 9 named differences, 0 unnamed
-- Message judge: `dns.message.from_wire` on the fixed and rejection cases: 39 judged, 36 agree, 3 named differences, 0 unnamed
+- Name judge: dnspython's wire parser and name reader on every `parse` input: 7573 judged, 7564 agree, 9 named differences, 0 unnamed
+- Message judge: `dns.message.from_wire` on the fixed and rejection cases: 41 judged, 38 agree, 3 named differences, 0 unnamed
 - Named differences: pointer-segment: 7 inputs; ttl-top-bit: 1 input; z-bit: 4 inputs
 
 The named rules:
