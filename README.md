@@ -1,6 +1,6 @@
 # dns: a DNS wire format parser and printer, with a proved round trip
 
-Status: in-progress
+Status: in progress
 
 A parser and printer for a whole DNS message, in Lean,
 following RFC 1035 sections 3, 4.1, and 4.1.4. The

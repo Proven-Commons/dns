@@ -9,9 +9,10 @@
 -/
 
 import Dns
+import Spec.Defs
 import Proofs.RoundTrip
 
-open Dns
+open Dns Spec
 
 theorem Spec.parse_print {m : Message} (hw : WF m) :
     parse (print m) = some m :=

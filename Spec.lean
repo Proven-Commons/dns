@@ -7,22 +7,24 @@
   checks that each one proves exactly the statement written
   here. The `sorry` below is expected in this file only.
 
-  The statements use only the definitions in `Dns/Value.lean`
-  and `Dns/Parse.lean`, the code under proof named in
-  `bar.toml`. No definition of their own is needed, so this
-  project has no `Spec/Defs.lean`.
+  The statements use the definitions in `Dns/Value.lean` and
+  `Dns/Parse.lean`, the code under proof named in `bar.toml`,
+  and well formedness (`Spec.WF` and the predicates it uses),
+  which is in `Spec/Defs.lean`. That file is part of the
+  specification too.
 -/
 
 import Dns
+import Spec.Defs
 
-open Dns
+open Dns Spec
 
 /-! ## The round trips
 
 The statements the slice stands on. Each one is the statement
 of the proved theorem of the same shape in
 `Proofs/RoundTrip.lean`, over the same well formedness
-predicate, `Dns.WF`. -/
+predicate, `Spec.WF`. -/
 
 /-- Parsing the printed form of a well formed message gives
     the message back, all four sections. The printed form
