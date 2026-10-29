@@ -248,23 +248,25 @@ theorem Spec.rejects_pointer_cycle_through_label :
     answer's name points at it, and its data holds 15
     pointers, each to the one before and the first to
     offset 12. The second answer's name points at the last
-    of them, so reading it follows 16 pointers. -/
+    of them, so reading it follows 16 pointers. Both
+    records have type 65280, a private use type (RFC 6895
+    section 3.1), so every reader holds their data opaque. -/
 theorem Spec.accepts_sixteen_hops :
     (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
-      1, 97, 0, 0, 1, 0, 1, 192, 12, 0, 16, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
       1, 0, 0, 0, 0, 0, 30, 192, 12, 192, 31, 192,
       33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
       45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
-      57, 192, 59, 0, 16, 0, 1, 0, 0, 0, 0, 0,
+      57, 192, 59, 255, 0, 0, 1, 0, 0, 0, 0, 0,
       0] : List UInt8)).isSome = true := sorry
 
 /-- A name that follows 17 pointers is refused: the same
     shape as above with one more pointer in the chain. -/
 theorem Spec.rejects_seventeen_hops :
     (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
-      1, 97, 0, 0, 1, 0, 1, 192, 12, 0, 16, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
       1, 0, 0, 0, 0, 0, 32, 192, 12, 192, 31, 192,
       33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
       45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
-      57, 192, 59, 192, 61, 0, 16, 0, 1, 0, 0, 0,
+      57, 192, 59, 192, 61, 255, 0, 0, 1, 0, 0, 0,
       0, 0, 0] : List UInt8)).isSome = false := sorry

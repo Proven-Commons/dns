@@ -128,10 +128,12 @@ meaning.
 A resource record is a name, then TYPE (two bytes), CLASS
 (two bytes), TTL (four bytes), RDLENGTH (two bytes), and
 RDLENGTH bytes of data, all big endian. TYPE, CLASS, and TTL
-are held as the values of their fields. The data is held as
-opaque bytes: this layer does not read names or anything
-else inside it, even when the data holds bytes shaped like a
-name.
+are held as the values of their fields; this layer gives
+them no meaning. In particular a TTL with its top bit set is
+held as read, not as 0, which RFC 2181 section 8 asks of a
+reader that uses the TTL. The data is held as opaque bytes:
+this layer does not read names or anything else inside it,
+even when the data holds bytes shaped like a name.
 
 ## Printing
 

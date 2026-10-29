@@ -46,10 +46,12 @@ the parser turns away, such as the single code `0`, answers
 fixed cases, the differential run against the harness
 oracle, the mutation and whole message runs, the
 compression runs and the mutations at each pointer, and the
-rejection and malformed cases,
-runs a cross check against the Python dnspython module
-when it is present, and writes the outcome to
-`tests/TEST-RESULTS.md`.
+rejection and malformed cases, and writes the outcome to
+`tests/TEST-RESULTS.md`. When the Python dnspython module
+can be imported (`pip install dnspython`), dnspython also
+judges the answers, and the results file lists every
+difference from it, each explained by a named rule; a
+difference no named rule explains is a failure.
 
 ## What is proved
 
@@ -168,11 +170,12 @@ are about.
   where the RFC leaves a choice open.
 - The strict Python oracle in `tests/run_tests.py`,
   written from `SPEC.md`, and the Python dnspython module
-  in the cross check it runs when the module is present.
-  Both are evidence, not proof. The results file states
-  plainly which oracles were and were not available:
-  dnspython was not present in this environment, so no
-  cross check against it ran.
+  in the judges it runs when the module is present. Both
+  are evidence, not proof. The results file names the
+  dnspython version that judged the run, or says that
+  none did, and lists the named differences from it: the
+  Z bit, a pointer into the name being read, and a TTL
+  with its top bit set.
 - The line handling in `Main.lean` (splitting a request
   line, reading decimal codes, the summary text). The
   tests drive it, and no proof covers it.
@@ -193,10 +196,11 @@ are about.
    and whole message runs, the compression runs and the
    mutations at each pointer, and the rejection and
    malformed cases, with counts and any
-   failures written to `tests/TEST-RESULTS.md`. The
-   harness also reads the accepted fixed messages with
-   dnspython when the module is present, and says so in
-   the results file when it is not.
+   failures written to `tests/TEST-RESULTS.md`. When
+   dnspython can be imported, it judges every `parse`
+   input by its name reader and the fixed cases by its
+   message reader, and the results file lists the named
+   differences; it says so when dnspython is absent.
 3. `lake build`: the library, the proofs, and the tool
    build clean, and `lake env lean Proofs/Verify.lean`
    prints the axiom list for the headline round trip

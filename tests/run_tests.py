@@ -59,10 +59,24 @@ Slice 2 sections:
    random later offset, and past the end; cut short inside
    the pointer; and turned into each reserved form.
 
-When the Python dnspython module is present, accepted fixed
-messages are also read with it and compared. When it is
-absent, the run says so on the record and the strict oracle
-carries the run.
+When the Python dnspython module is present, two dnspython
+judges also run, counted apart from the inputs above so that a
+run with or without the module records the same Inputs:
+
+- the name judge reads every `parse` input with dnspython's own
+  wire parser and name reader (`dns.wirebase.Parser`,
+  `dns.name.from_wire_parser`), in the message layout of RFC
+  1035 section 4.1 written here, with record data held opaque;
+- the message judge reads the fixed cases, accepted and refused,
+  with `dns.message.from_wire`, which also reads record data by
+  type.
+
+Where a judge and the tool disagree, the difference must be
+explained by a named rule: the strict oracle with that rule
+changed to dnspython's must give dnspython's answer. The named
+differences are counted in the results file; any other
+disagreement is a failure. When the module is absent, the
+results file says so and the strict oracle carries the run.
 
     python3 tests/run_tests.py [--seed N] [--count N]
 
@@ -72,6 +86,7 @@ and exits non-zero if any check fails. It needs Python 3.11+.
 """
 
 import argparse
+import platform
 import random
 import subprocess
 import sys
@@ -88,14 +103,15 @@ CHUNK = 200
 SEED_DEFAULT = 20261026
 
 try:
+    import dns.exception
     import dns.message
     import dns.name
-    import dns.rdataclass
-    import dns.rdatatype
+    import dns.version
+    import dns.wirebase
 
-    DNSPYTHON = True
+    DNSPYTHON = dns.version.version
 except ImportError:
-    DNSPYTHON = False
+    DNSPYTHON = None
 
 
 def codes(data):
@@ -295,24 +311,50 @@ def summary(model):
 MAX_HOPS = 16
 
 
-def read_name(data, pos, stats=None):
+# The rules where dnspython reads differently, each a change the
+# strict oracle can make to its own reading. A disagreement with
+# dnspython is named when the oracle, with some of these changed,
+# gives dnspython's answer.
+NAMED_RULES = {
+    "z-bit": "dnspython keeps the Z bit (0x40 of the fourth byte);"
+    " this parser refuses a message with Z set, the one reserved"
+    " flag bit (SPEC.md, The header)",
+    "pointer-segment": "dnspython follows a pointer only when its target"
+    " lies before the start of the name part that holds the pointer"
+    " (the name's start, or the previous target), and reads nothing"
+    " at or after that start; this parser asks only that the target"
+    " lie before the pointer, so it reads a pointer into the name"
+    " being read (SPEC.md, Names and compression)",
+    "ttl-top-bit": "dnspython's message reader reads a TTL with its top"
+    " bit set as 0, as RFC 2181 section 8 asks of a TTL above 2^31 - 1;"
+    " this layer holds the four byte TTL field as read and gives it no"
+    " meaning (SPEC.md, Records)",
+}
+
+
+def read_name(data, pos, stats=None, rules=frozenset()):
     """Read a name at pos by the plan rules. Returns
     (labels, position after the name at the place it was read),
     or None. At most MAX_HOPS pointers are followed. The step
     cap mirrors the Lean fuel, which no reading reaches. When
     `stats` is a dict, each pointer followed adds one to
-    stats["hops"]."""
+    stats["hops"]. With "pointer-segment" in `rules`, pointers
+    follow dnspython's rule instead (see NAMED_RULES)."""
     labels = []
     budget = 255
     hops = 0
     nextpos = None
     cur = pos
     steps = 0
+    # For the pointer-segment rule: the start of the name part
+    # being read, and the end of the bytes it may read.
+    seg_start = pos
+    end = len(data)
     while True:
         steps += 1
         if steps > 256:
             return None
-        if cur >= len(data):
+        if cur >= end:
             return None
         b = data[cur]
         if b == 0:
@@ -326,17 +368,21 @@ def read_name(data, pos, stats=None):
             if b + 1 > budget:
                 return None
             budget -= b + 1
-            if cur + 1 + b > len(data):
+            if cur + 1 + b > end:
                 return None
             labels.append(bytes(data[cur + 1 : cur + 1 + b]))
             cur = cur + 1 + b
             continue
         if b >= 192:
-            if cur + 1 >= len(data):
+            if cur + 1 >= end:
                 return None
             target = (b - 192) * 256 + data[cur + 1]
             if not (target < cur and target < len(data)):
                 return None
+            if "pointer-segment" in rules:
+                if target >= seg_start:
+                    return None
+                end, seg_start = seg_start, target
             hops += 1
             if hops > MAX_HOPS:
                 return None
@@ -349,10 +395,12 @@ def read_name(data, pos, stats=None):
         return None
 
 
-def oracle_parse(data, stats=None):
+def oracle_parse(data, stats=None, rules=frozenset()):
     """The strict reading of the plan rules, as a parse into a
     model, or None when the message is rejected. `stats` is
-    passed to read_name."""
+    passed to read_name. `rules` names rules to read as
+    dnspython does (see NAMED_RULES); empty, it is the strict
+    reading the tool must match."""
     if len(data) < 12:
         return None
     mid = data[0] * 256 + data[1]
@@ -369,7 +417,7 @@ def oracle_parse(data, stats=None):
         (f2 // 16) % 2,
     )
     # Z (0x40) is the one reserved bit; AD and CD are read.
-    if (f2 // 64) % 2 != 0:
+    if (f2 // 64) % 2 != 0 and "z-bit" not in rules:
         return None
     qd = data[4] * 256 + data[5]
     an = data[6] * 256 + data[7]
@@ -378,7 +426,7 @@ def oracle_parse(data, stats=None):
     pos = 12
     questions = []
     for _ in range(qd):
-        got = read_name(data, pos, stats)
+        got = read_name(data, pos, stats, rules)
         if got is None:
             return None
         labels, pos = got
@@ -391,7 +439,7 @@ def oracle_parse(data, stats=None):
         pos += 4
 
     def read_record(pos):
-        got = read_name(data, pos, stats)
+        got = read_name(data, pos, stats, rules)
         if got is None:
             return None
         labels, pos = got
@@ -400,6 +448,8 @@ def oracle_parse(data, stats=None):
         rtype = data[pos] * 256 + data[pos + 1]
         rclass = data[pos + 2] * 256 + data[pos + 3]
         ttl = int.from_bytes(data[pos + 4 : pos + 8], "big")
+        if "ttl-top-bit" in rules and ttl > 0x7FFFFFFF:
+            ttl = 0
         rdlen = data[pos + 8] * 256 + data[pos + 9]
         pos += 10
         if pos + rdlen > len(data):
@@ -450,13 +500,13 @@ class Tally:
         self.inputs = 0
         self.agreements = 0
         self.failures = []
-        # The message bytes behind each input, for the pointer
-        # counts in the results file.
-        self.datas = []
+        # (message bytes, operation, answer) for each input, for
+        # the pointer counts and the dnspython judges.
+        self.seen = []
 
     def check(self, data, answer, label, op="parse"):
         self.inputs += 1
-        self.datas.append(data)
+        self.seen.append((data, op, answer))
         want = expected_parse(data) if op == "parse" else expected_sections(data)
         if answer == want:
             self.agreements += 1
@@ -673,23 +723,28 @@ def pointer(target):
     return bytes([0xC0 | (target // 256), target % 256])
 
 
+PRIVATE_TYPE = 65280
+
+
 def hop_chain(hops):
     """A response whose second answer name follows `hops`
     pointers. The question name is the label a at offset 12.
     The first answer's name is a pointer to it, and its data
     holds hops - 1 pointers, each to the one before, the first
     to offset 12. The second answer's name is a pointer to the
-    last of them."""
+    last of them. Both records have type 65280, one of the
+    private use types (RFC 6895 section 3.1), whose data every
+    reader holds opaque."""
     k = hops - 1
     wire = header_bytes(7, 1, 0, 0, 0, 0, 0, 0, 1, an=2)
     wire += question_bytes([b"a"], 1, 1)
-    wire += pointer(12) + be16(16) + be16(1) + be32(0) + be16(2 * k)
+    wire += pointer(12) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(2 * k)
     start = len(wire)
     chain = b""
     for i in range(k):
         chain += pointer(12 if i == 0 else start + 2 * (i - 1))
     wire += chain
-    wire += pointer(start + 2 * (k - 1)) + be16(16) + be16(1) + be32(0) + be16(0)
+    wire += pointer(start + 2 * (k - 1)) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(0)
     return wire
 
 
@@ -697,15 +752,16 @@ def long_pointer_chain(links, names):
     """A message whose first answer's data is a chain of
     `links` pointers, each to the one before, the first to the
     root name at offset 12, followed by `names` answers whose
-    names point at the last link."""
+    names point at the last link. The records have type
+    65280, as in hop_chain."""
     wire = header_bytes(7, 1, 0, 0, 0, 0, 0, 0, 0, an=1 + names)
-    wire += bytes([0]) + be16(16) + be16(1) + be32(0) + be16(2 * links)
+    wire += bytes([0]) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(2 * links)
     start = len(wire)
     for i in range(links):
         wire += pointer(12 if i == 0 else start + 2 * (i - 1))
     head = start + 2 * (links - 1)
     for _ in range(names):
-        wire += pointer(head) + be16(16) + be16(1) + be32(0) + be16(0)
+        wire += pointer(head) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(0)
     return wire
 
 
@@ -778,8 +834,8 @@ def full_fixed_cases():
     model = qmodel(7, (1, 0, 0, 0, 0, 0, 0, 0, 0), [([b"a"], 1, 1)])
     chain = hop_chain(16)
     model["answers"] = [
-        ([b"a"], 16, 1, 0, chain[31:61]),
-        ([b"a"], 16, 1, 0, b""),
+        ([b"a"], PRIVATE_TYPE, 1, 0, chain[31:61]),
+        ([b"a"], PRIVATE_TYPE, 1, 0, b""),
     ]
     cases.append(("sixteen-hops", chain, model))
 
@@ -795,10 +851,13 @@ def full_fixed_cases():
     ]
     cases.append(("authority-additional", model_bytes(model), model))
 
-    # An answer record whose name is written in full, with
-    # empty data, next to a root name question.
+    # An answer record whose name is written in full, next to a
+    # root name question. It is a TXT record (type 16), whose
+    # data RFC 1035 section 3.3.14 makes one or more
+    # character-strings, so its data is one empty
+    # character-string, the single byte 0, not empty.
     model = qmodel(0x5555, RESPONSE, [([], 255, 255)])
-    model["answers"] = [([b"deep", b"a", b"b"], 16, 3, 4294967295, b"")]
+    model["answers"] = [([b"deep", b"a", b"b"], 16, 3, 4294967295, b"\x00")]
     cases.append(("full-names", model_bytes(model), model))
     return cases
 
@@ -810,7 +869,7 @@ def run_full_fixed(op):
     tally.failures += problems
     for (label, data, model), answer in zip(cases, answers):
         tally.inputs += 1
-        tally.datas.append(data)
+        tally.seen.append((data, op, answer))
         want = (
             "ok:" + codes(model_bytes(model))
             if op == "parse"
@@ -947,7 +1006,7 @@ def run_rejections():
     ):
         for op, answer in (("parse", p_ans), ("sections", s_ans)):
             tally.inputs += 1
-            tally.datas.append(data)
+            tally.seen.append((data, op, answer))
             if answer == "none":
                 tally.agreements += 1
             else:
@@ -1028,7 +1087,7 @@ def run_random_full(seed, count, op):
     tally.failures += problems
     for i, (model, data, answer) in enumerate(zip(models, docs, answers)):
         tally.inputs += 1
-        tally.datas.append(data)
+        tally.seen.append((data, op, answer))
         want = (
             "ok:" + codes(data)
             if op == "parse"
@@ -1123,7 +1182,7 @@ def run_compressed(models, docs, op):
     tally.failures += problems
     for i, (model, (data, _), answer) in enumerate(zip(models, docs, answers)):
         tally.inputs += 1
-        tally.datas.append(data)
+        tally.seen.append((data, op, answer))
         want = (
             "ok:" + codes(model_bytes(model))
             if op == "parse"
@@ -1187,38 +1246,162 @@ def follows_pointer(data):
     return stats.get("hops", 0) > 0
 
 
-def dnspython_crosschecks():
-    """Read the accepted fixed messages with dnspython, when it
-    is present. Returns (checks, failures)."""
-    checks = 0
-    failures = []
-    if not DNSPYTHON:
-        return checks, failures
-    cases = [(label, data) for label, data in fixed_cases()
-             if oracle_parse(data) is not None]
+def dnspython_names_read(data):
+    """Read a message with dnspython's wire parser and name
+    reader. The layout is RFC 1035 section 4.1, written here:
+    the twelve header bytes, then the four sections, each name
+    read by dns.name.from_wire_parser, record data held opaque,
+    and nothing after the last record (dnspython's message
+    reader refuses trailing bytes too). The header is read as
+    dnspython's message reader reads it: no flag bit is
+    refused. Returns a model, or None when dnspython raises."""
+    try:
+        parser = dns.wirebase.Parser(data)
+        mid, f, qd, an, ns, ar = parser.get_struct("!HHHHHH")
+        flags = (
+            f >> 15, (f >> 11) & 15, (f >> 10) & 1, (f >> 9) & 1,
+            (f >> 8) & 1, (f >> 7) & 1, f & 15, (f >> 5) & 1, (f >> 4) & 1,
+        )
+
+        def name():
+            return [bytes(lab) for lab in dns.name.from_wire_parser(parser).labels[:-1]]
+
+        questions = []
+        for _ in range(qd):
+            labels = name()
+            qt, qc = parser.get_struct("!HH")
+            questions.append((labels, qt, qc))
+        sections = {}
+        for key, count in (("answers", an), ("authorities", ns),
+                           ("additionals", ar)):
+            records = []
+            for _ in range(count):
+                labels = name()
+                rt, rc, ttl, rdlen = parser.get_struct("!HHIH")
+                records.append((labels, rt, rc, ttl, parser.get_bytes(rdlen)))
+            sections[key] = records
+        if parser.remaining() != 0:
+            return None
+    except dns.exception.DNSException:
+        return None
+    return {"id": mid, "flags": flags, "questions": questions, **sections}
+
+
+def parse_answer(model):
+    """The `parse` answer the tool gives for a model, or for None."""
+    return "none" if model is None else "ok:" + codes(model_bytes(model))
+
+
+def message_view(model):
+    """What the message judge compares: the identifier, the
+    flags, the questions, and each record's name, type, class
+    and TTL. OPT records (type 41) are left out, since
+    dnspython moves them out of the additional section into its
+    EDNS fields."""
+    if model is None:
+        return None
+
+    def recs(rs):
+        return [(r[0], r[1], r[2], r[3]) for r in rs if r[1] != 41]
+
+    return (model["id"], model["flags"], model["questions"],
+            recs(model["answers"]), recs(model["authorities"]),
+            recs(model["additionals"]))
+
+
+def dnspython_message_view(data):
+    """dns.message.from_wire's reading of `data`, as a
+    message_view, or None when it raises."""
+    try:
+        msg = dns.message.from_wire(data, one_rr_per_rrset=True)
+    except dns.exception.DNSException:
+        return None
+    f = msg.flags
+    flags = (
+        f >> 15, (f >> 11) & 15, (f >> 10) & 1, (f >> 9) & 1,
+        (f >> 8) & 1, (f >> 7) & 1, f & 15, (f >> 5) & 1, (f >> 4) & 1,
+    )
+
+    def labels(n):
+        return [bytes(lab) for lab in n.labels[:-1]]
+
+    def recs(section):
+        return [(labels(rr.name), rr.rdtype, rr.rdclass, rr.ttl)
+                for rr in section for _ in rr if rr.rdtype != 41]
+
+    return (msg.id, flags,
+            [(labels(q.name), q.rdtype, q.rdclass) for q in msg.question],
+            recs(msg.answer), recs(msg.authority), recs(msg.additional))
+
+
+def explain(data, want, oracle_view):
+    """The smallest set of named rules under which the strict
+    oracle's reading of `data`, seen through `oracle_view`,
+    equals `want`, dnspython's; None when no set does."""
+    names = sorted(NAMED_RULES)
+    subsets = [frozenset()]
+    for n in names:
+        subsets += [sub | {n} for sub in subsets]
+    for sub in sorted(subsets, key=len):
+        if sub and oracle_view(oracle_parse(data, rules=sub)) == want:
+            return sub
+    return None
+
+
+class Judge:
+    """A dnspython judge's tally: inputs judged, agreements, and
+    the differences, named or not."""
+
+    def __init__(self):
+        self.judged = 0
+        self.agree = 0
+        self.named = {}
+        self.unnamed = []
+
+    def judge(self, data, tool_view, want, oracle_view, label):
+        self.judged += 1
+        if tool_view == want:
+            self.agree += 1
+            return
+        # A difference is named only when the tool gives the
+        # strict oracle's answer and the oracle, with named rules
+        # changed, gives dnspython's.
+        rules = None
+        if oracle_view(oracle_parse(data)) == tool_view:
+            rules = explain(data, want, oracle_view)
+        if rules is None:
+            self.unnamed.append(f"{label}: dnspython {str(want)[:80]},"
+                                f" tool {str(tool_view)[:80]}")
+        else:
+            key = " and ".join(sorted(rules))
+            self.named[key] = self.named.get(key, 0) + 1
+
+
+def run_name_judge(tallies):
+    """Judge every `parse` input with dnspython's name reader."""
+    j = Judge()
+    for _, t in tallies:
+        for data, op, answer in t.seen:
+            if op != "parse" or answer is None:
+                continue
+            want = parse_answer(dnspython_names_read(data))
+            j.judge(data, answer, want, parse_answer, f"name judge {data.hex()[:60]}")
+    return j
+
+
+def run_message_judge():
+    """Judge the fixed cases, accepted and refused, with
+    dns.message.from_wire. The tool's reading is taken from the
+    strict oracle, which the differential above holds it to."""
+    j = Judge()
+    cases = [(label, data) for label, data in fixed_cases()]
     cases += [(label, data) for label, data, _ in full_fixed_cases()]
+    cases += rejection_cases()
     for label, data in cases:
-        checks += 1
-        try:
-            msg = dns.message.from_wire(data)
-            model = oracle_parse(data)
-            if msg.id != model["id"]:
-                failures.append(f"{label}: dnspython read a different id")
-            got_q = [
-                [bytes(l) for l in q.name.labels[:-1]] for q in msg.question
-            ]
-            want_q = [list(q[0]) for q in model["questions"]]
-            if got_q != want_q:
-                failures.append(f"{label}: dnspython read different questions")
-            got_a = [
-                [bytes(l) for l in rr.name.labels[:-1]] for rr in msg.answer
-            ]
-            want_a = [list(r[0]) for r in model["answers"]]
-            if got_a != want_a:
-                failures.append(f"{label}: dnspython read different answers")
-        except Exception as e:  # dnspython refused or stumbled
-            failures.append(f"{label}: dnspython raised {type(e).__name__}")
-    return checks, failures
+        tool = message_view(oracle_parse(data))
+        want = dnspython_message_view(data)
+        j.judge(data, tool, want, message_view, f"message judge {label}")
+    return j
 
 
 MALFORMED = [
@@ -1289,7 +1472,6 @@ def main():
     comp_s = run_compressed(comp_models, comp_docs, "sections")
     comp_mut = run_pointer_mutations(comp_docs, args.seed)
     malf = run_malformed()
-    dp_checks, dp_failures = dnspython_crosschecks()
 
     tallies = [
         ("Slice 1 fixed cases", fixed),
@@ -1303,51 +1485,127 @@ def main():
         ("Compressed random and suffix messages, parse", comp_p),
         ("Compressed random and suffix messages, sections", comp_s),
         ("Mutations of the compressed messages at their pointers, parse", comp_mut),
+        ("Malformed requests, answered error", malf),
     ]
     failures = []
     for _, t in tallies:
         failures += t.failures
-    failures += malf.failures + dp_failures
     total_in = sum(t.inputs for _, t in tallies)
     total_agree = sum(t.agreements for _, t in tallies)
-    with_pointer = sum(follows_pointer(d) for _, t in tallies for d in t.datas)
+    with_pointer = sum(follows_pointer(d) for _, t in tallies for d, _, _ in t.seen)
     comp_with_pointer = sum(1 for _, ptrs in comp_docs if ptrs)
     comp_pointers = sum(len(ptrs) for _, ptrs in comp_docs)
+
+    judges = []
+    if DNSPYTHON:
+        judges = [
+            ("Name judge: dnspython's wire parser and name reader on every"
+             " `parse` input", run_name_judge(tallies)),
+            ("Message judge: `dns.message.from_wire` on the fixed and"
+             " rejection cases", run_message_judge()),
+        ]
+        for _, j in judges:
+            failures += j.unnamed
 
     lean_ver = subprocess.run(
         ["lake", "env", "lean", "--version"],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=120,
     ).stdout.strip()
 
+    oracle = (
+        "the strict reading of SPEC.md in tests/run_tests.py, on Python "
+        + platform.python_version()
+    )
+    if DNSPYTHON:
+        oracle += f"; cross-checked against dnspython {DNSPYTHON}, counted apart"
+    else:
+        oracle += "; dnspython not installed, so no cross check ran"
     lines = [
         "# Test results",
         "",
-        "Written by `tests/run_tests.py`. Rerun it to check these numbers.",
+        "Written by `python3 tests/run_tests.py`, which builds the tool with",
+        "`lake build`, sends each input to it, and compares each answer with",
+        "the strict oracle's. Rerun it to check these numbers.",
         "",
-        "- Oracle: a strict reading of the plan rules written in the harness"
-        " (Python 3.12.3), plus hand-built fixed cases from RFC 1035",
-        f"- dnspython: {'present, cross checks run' if DNSPYTHON else 'not present in this environment, no cross check run'}",
-        f"- Lean: {lean_ver}",
+        f"- Oracle: {oracle}",
         f"- Seed: {args.seed}",
+        f"- Inputs: {total_in}",
+        f"- Failures: {len(failures)}",
+        f"- Lean: {lean_ver}",
+        "",
+        "Inputs by section, with the answers that agree with the oracle:",
+        "",
     ]
     for label, t in tallies:
-        lines.append(f"- {label}: {t.agreements} of {t.inputs} agreements")
+        lines.append(f"  - {label}: {t.agreements} of {t.inputs}")
     lines += [
-        f"- Malformed requests answered error: {malf.agreements} of {malf.inputs}",
-        f"- dnspython cross checks: {dp_checks} run, {len(dp_failures)} failures"
-        if DNSPYTHON else "- dnspython cross checks: 0 run (module absent)",
-        f"- Compressed messages holding a pointer: {comp_with_pointer} of"
+        "",
+        f"In all, {total_agree} of {total_in} answers agree.",
+        "",
+        "Pointers:",
+        "",
+        f"  - Compressed messages holding a pointer: {comp_with_pointer} of"
         f" {len(comp_docs)}, {comp_pointers} pointers in all",
-        f"- Differential inputs whose reading follows a pointer: {with_pointer}"
+        f"  - Inputs whose reading follows at least one pointer: {with_pointer}"
         f" of {total_in}",
-        f"- Differential inputs: {total_in}",
-        f"- Differential agreements: {total_agree}",
-        "- Named differences: none",
-        f"- Failures: {len(failures)}",
+        "",
+        "## Cross-check against dnspython",
+        "",
+        "The oracle above is written in this project, from SPEC.md. dnspython,",
+        "written apart from it, judges the tool's answers where it can be",
+        "imported (`pip install dnspython`). Its checks are counted apart, not",
+        "in Inputs, so a run with or without it records the same Inputs.",
+        "",
+        "- The name judge reads each `parse` input with dnspython's own wire",
+        "  parser and name reader, `dns.wirebase.Parser` and",
+        "  `dns.name.from_wire_parser`, in the message layout of RFC 1035",
+        "  section 4.1 written in the harness, with record data held opaque, as",
+        "  this layer holds it. Its answer is dnspython's reading, printed as",
+        "  the tool prints, or `none` when dnspython raises.",
+        "- The message judge reads the fixed and rejection cases with",
+        "  `dns.message.from_wire`, which also reads record data by type. It",
+        "  compares the identifier, the flags, the questions, and each record's",
+        "  name, type, class and TTL. It runs on those cases only, since that",
+        "  reader also refuses record data that is not well formed for its",
+        "  type, and handles OPT and TSIG records and the UPDATE opcode by",
+        "  their own rules, none of which this layer reads.",
+        "",
+        "A disagreement is a named difference when the strict oracle, with the",
+        "named rules changed to read as dnspython reads, gives dnspython's",
+        "answer. Any other disagreement is a failure, counted above.",
         "",
     ]
+    if DNSPYTHON:
+        named = {}
+        for label, j in judges:
+            lines.append(
+                f"- {label}: {j.judged} judged, {j.agree} agree,"
+                f" {sum(j.named.values())} named differences,"
+                f" {len(j.unnamed)} unnamed"
+            )
+            for key, n in j.named.items():
+                named[key] = named.get(key, 0) + n
+        if named:
+            lines.append(
+                "- Named differences: "
+                + "; ".join(f"{k}: {n} input{'s' if n != 1 else ''}"
+                            for k, n in sorted(named.items()))
+            )
+        else:
+            lines.append("- Named differences: none")
+        lines += ["", "The named rules:", ""]
+        for key in sorted(NAMED_RULES):
+            lines.append(f"  - {key}: {NAMED_RULES[key]}.")
+    else:
+        lines.append(
+            "- dnspython is not installed here, so neither judge ran and no"
+            " difference was computed."
+        )
+        lines.append("- Named differences: not computed")
+    lines.append("")
     if failures:
         lines.append("## Failures")
+        lines.append("")
         lines += [f"- {f}" for f in failures[:40]]
         lines.append("")
     RESULTS.write_text("\n".join(lines))
