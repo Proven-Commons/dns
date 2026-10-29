@@ -6,13 +6,14 @@ the strict oracle's. Rerun it to check these numbers.
 
 - Oracle: the strict reading of SPEC.md in tests/run_tests.py, on Python 3.13.17; cross-checked against dnspython 2.9.1, counted apart
 - Seed: 20261026
-- Inputs: 8211
+- Inputs: 8231
 - Failures: 0
 - Lean: Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)
 
 Inputs by section, with the answers that agree with the oracle:
 
-  - Slice 1 fixed cases: 22 of 22
+  - Slice 1 fixed cases, parse: 22 of 22
+  - Slice 1 fixed cases, sections: 20 of 20
   - Slice 1 random well formed messages: 400 of 400
   - Slice 1 mutations (every truncation, every single byte flip, targeted): 66 of 66
   - Full fixed cases, parse: 8 of 8
@@ -25,12 +26,12 @@ Inputs by section, with the answers that agree with the oracle:
   - Mutations of the compressed messages at their pointers, parse: 6464 of 6464
   - Malformed requests, answered error: 17 of 17
 
-In all, 8211 of 8211 answers agree.
+In all, 8231 of 8231 answers agree.
 
 Pointers:
 
   - Compressed messages holding a pointer: 259 of 302, 808 pointers in all
-  - Inputs whose reading follows at least one pointer: 5194 of 8211
+  - Inputs whose reading follows at least one pointer: 5195 of 8231
 
 ## Cross-check against dnspython
 
@@ -43,15 +44,18 @@ in Inputs, so a run with or without it records the same Inputs.
   parser and name reader, `dns.wirebase.Parser` and
   `dns.name.from_wire_parser`, in the message layout of RFC 1035
   section 4.1 written in the harness, with record data held opaque, as
-  this layer holds it. Its answer is dnspython's reading, printed as
-  the tool prints, or `none` when dnspython raises.
+  this layer holds it. dnspython's reading, printed as the tool
+  prints, or `none` when dnspython raises, is compared with the tool's
+  `parse` answer for that input.
 - The message judge reads the fixed and rejection cases with
-  `dns.message.from_wire`, which also reads record data by type. It
-  compares the identifier, the flags, the questions, and each record's
-  name, type, class and TTL. It runs on those cases only, since that
-  reader also refuses record data that is not well formed for its
-  type, and handles OPT and TSIG records and the UPDATE opcode by
-  their own rules, none of which this layer reads.
+  `dns.message.from_wire`, which also reads record data by type, and
+  compares its reading with the tool's `sections` answer for each
+  case, read back from the summary text: the identifier, the flags
+  by name, the questions, and each record's name, type, class and
+  TTL. It runs on those cases only, since that reader also refuses
+  record data that is not well formed for its type, and handles OPT
+  and TSIG records and the UPDATE opcode by their own rules, none of
+  which this layer reads.
 
 A disagreement is a named difference when the strict oracle, with the
 named rules changed to read as dnspython reads, gives dnspython's

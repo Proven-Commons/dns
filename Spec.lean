@@ -48,19 +48,45 @@ theorem Spec.parse_print_question_only {h : Header}
 
 How the twelve header bytes are read, for every input. The
 round trips above hold for any pair of reader and printer that
-agree with each other, so they do not pin which bit is which;
-these statements do, against RFC 1035 section 4.1.1 and the
-layout of the fourth byte in RFC 6895 section 2. -/
+agree with each other, so they do not pin which bit is which:
+a parser and a printer that both swapped two flags would still
+pass them. These statements pin the layout, against RFC 1035
+section 4.1.1 and the layout of the fourth byte in RFC 6895
+section 2. -/
 
-/-- The header fields, read from the twelve header bytes, for
-    any bytes after them, when the Z bit (0x40 of the fourth
-    byte) is clear. The third byte holds QR (0x80), the
-    opcode (0x78), AA (0x04), TC (0x02), and RD (0x01). The
-    fourth holds RA (0x80), Z (0x40), AD (0x20, RFC 4035
-    section 3.2.3), CD (0x10, RFC 4035 section 3.2.2), and
-    the RCODE (0x0F). AD and CD are read like any other flag:
-    a message with either set is not turned away for it. The
-    counts are the next four big endian byte pairs. -/
+/-- Every message `parse` accepts has the header its first
+    twelve bytes give, and as many entries in each section as
+    the count for that section says. The third byte holds QR
+    (0x80), the opcode (0x78), AA (0x04), TC (0x02), and RD
+    (0x01). The fourth holds RA (0x80), Z (0x40), AD (0x20,
+    RFC 4035 section 3.2.3), CD (0x10, RFC 4035 section
+    3.2.2), and the RCODE (0x0F). The identifier and the four
+    counts (questions, answers, authority records, additional
+    records) are big endian byte pairs. Z is not held: a
+    message with Z set is refused (`Spec.rejects_z_bit`). -/
+theorem Spec.parse_reads_header
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    {m : Message}
+    (hm : parse (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) = some m) :
+    m.header = { id := i1.toNat * 256 + i2.toNat,
+                 qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+                 aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+                 rd := f1.toNat % 2,
+                 ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+                 cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 } ∧
+    m.questions.length = q1.toNat * 256 + q2.toNat ∧
+    m.answers.length = a1.toNat * 256 + a2.toNat ∧
+    m.authorities.length = n1.toNat * 256 + n2.toNat ∧
+    m.additionals.length = r1.toNat * 256 + r2.toNat := sorry
+
+/-- The same layout for `parseHeader`, the header reader that
+    `parse` calls first, with one thing more: it accepts every
+    twelve header bytes whose Z bit (0x40 of the fourth byte)
+    is clear, whatever bytes follow them. AD and CD are read
+    like any other flag: a header with either set is not
+    turned away for it. The counts are the next four big
+    endian byte pairs. -/
 theorem Spec.parseHeader_fields
     (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
     (hz : (f2.toNat / 64) % 2 = 0) :

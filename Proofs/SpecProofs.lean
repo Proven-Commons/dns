@@ -56,6 +56,67 @@ theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
   rw [hh]
   rfl
 
+namespace Dns.Proofs
+
+/-- A question list read with count `n` holds `n` questions. -/
+theorem parseQuestionsIn_length : ∀ (n : Nat) (full bs : List UInt8)
+    (qs : List Question) (r : List UInt8),
+    parseQuestionsIn n full bs = some (qs, r) → qs.length = n
+  | 0, _, _, qs, r, h => by
+    simp only [parseQuestionsIn, Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1]; rfl
+  | n + 1, full, bs, qs, r, h => by
+    simp only [parseQuestionsIn, bind, Option.bind_eq_some_iff] at h
+    obtain ⟨⟨q, rest⟩, _, ⟨qs', r'⟩, hr, he⟩ := h
+    simp only [Option.some.injEq, Prod.mk.injEq] at he
+    rw [← he.1, List.length_cons, parseQuestionsIn_length n full rest qs' r' hr]
+
+/-- A record list read with count `n` holds `n` records. -/
+theorem parseRecordsIn_length : ∀ (n : Nat) (full bs : List UInt8)
+    (rs : List Record) (r : List UInt8),
+    parseRecordsIn n full bs = some (rs, r) → rs.length = n
+  | 0, _, _, rs, r, h => by
+    simp only [parseRecordsIn, Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1]; rfl
+  | n + 1, full, bs, rs, r, h => by
+    simp only [parseRecordsIn, bind, Option.bind_eq_some_iff] at h
+    obtain ⟨⟨x, rest⟩, _, ⟨rs', r'⟩, hr, he⟩ := h
+    simp only [Option.some.injEq, Prod.mk.injEq] at he
+    rw [← he.1, List.length_cons, parseRecordsIn_length n full rest rs' r' hr]
+
+end Dns.Proofs
+
+theorem Spec.parse_reads_header
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    {m : Message}
+    (hm : parse (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) = some m) :
+    m.header = { id := i1.toNat * 256 + i2.toNat,
+                 qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+                 aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+                 rd := f1.toNat % 2,
+                 ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+                 cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 } ∧
+    m.questions.length = q1.toNat * 256 + q2.toNat ∧
+    m.answers.length = a1.toNat * 256 + a2.toNat ∧
+    m.authorities.length = n1.toNat * 256 + n2.toNat ∧
+    m.additionals.length = r1.toNat * 256 + r2.toNat := by
+  by_cases hz : (f2.toNat / 64) % 2 = 0
+  · simp only [parse, Spec.parseHeader_fields i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 rest hz,
+      bind, Option.bind_eq_some_iff, Option.bind_some] at hm
+    obtain ⟨⟨qs, s1⟩, hq, ⟨ans, s2⟩, ha, ⟨aus, s3⟩, hs, ⟨ads, s4⟩, ht, he⟩ := hm
+    by_cases hr : s4 = []
+    · simp only [hr, ite_true, Option.some.injEq] at he
+      subst he
+      exact ⟨rfl, Dns.Proofs.parseQuestionsIn_length _ _ _ _ _ hq,
+        Dns.Proofs.parseRecordsIn_length _ _ _ _ _ ha,
+        Dns.Proofs.parseRecordsIn_length _ _ _ _ _ hs,
+        Dns.Proofs.parseRecordsIn_length _ _ _ _ _ ht⟩
+    · simp only [hr, ite_false] at he
+      cases he
+  · rw [Spec.rejects_z_bit i1 i2 f1 f2 _ (by omega)] at hm
+    cases hm
+
 theorem Spec.reads_rfc_4_1_4 :
     parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,

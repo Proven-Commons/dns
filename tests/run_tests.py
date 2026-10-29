@@ -12,9 +12,12 @@ Slice 1 sections, kept and re-run:
    RD+AD, RD+CD and RA+AD shapes resolvers send, which are
    read, and the rejection shapes (the Z bit set, a short
    header, a label byte of 64, bytes after the last question,
-   a count that does not match the bytes, a label cut short). Slice 1 turned a nonzero
-   answer count away; slice 2 reads records, so that case moved
-   to the whole message sections below.
+   a count that does not match the bytes, a label cut short).
+   Each runs through both `parse` and `sections`; the summary
+   that `sections` answers shows each header flag by name.
+   Slice 1 turned a nonzero answer count away; slice 2 reads
+   records, so that case moved to the whole message sections
+   below.
 
 2. A differential run against the strict Python oracle in this
    harness: random well formed question-only messages;
@@ -67,10 +70,12 @@ run with or without the module records the same Inputs:
 - the name judge reads every `parse` input with dnspython's own
   wire parser and name reader (`dns.wirebase.Parser`,
   `dns.name.from_wire_parser`), in the message layout of RFC
-  1035 section 4.1 written here, with record data held opaque;
+  1035 section 4.1 written here, with record data held opaque,
+  and compares that reading with the tool's `parse` answer;
 - the message judge reads the fixed cases, accepted and refused,
   with `dns.message.from_wire`, which also reads record data by
-  type.
+  type, and compares that reading with the tool's `sections`
+  answer, read back from the summary text.
 
 Where a judge and the tool disagree, the difference must be
 explained by a named rule: the strict oracle with that rule
@@ -296,8 +301,11 @@ def summary(model):
             + ",".join(str(b) for b in r[4])
         )
 
+    qr, opcode, aa, tc, rd, ra, rcode, ad, cd = model["flags"]
     return (
         f"id={model['id']}"
+        f";qr={qr};opcode={opcode};aa={aa};tc={tc};rd={rd};ra={ra}"
+        f";ad={ad};cd={cd};rcode={rcode}"
         f";qd={len(model['questions'])}"
         f";an={len(model['answers'])}"
         f";ns={len(model['authorities'])}"
@@ -625,6 +633,20 @@ def run_fixed():
     tally.failures += problems
     for line, answer in zip(["parse ", "parse"], answers):
         tally.check_line(line, answer, "none", "no codes")
+    return tally
+
+
+def run_fixed_sections():
+    """The slice 1 fixed cases through the `sections` operation,
+    whose summary shows each header flag by name. The `parse`
+    answer reprints the flags in their bit places, so it would
+    not show a reader and printer that both moved a flag."""
+    tally = Tally()
+    cases = fixed_cases()
+    answers, problems = ask_all([request("sections", d) for _, d in cases])
+    tally.failures += problems
+    for (label, data), answer in zip(cases, answers):
+        tally.check(data, answer, f"fixed {label}", op="sections")
     return tally
 
 
@@ -1335,6 +1357,56 @@ def dnspython_message_view(data):
             recs(msg.answer), recs(msg.authority), recs(msg.additional))
 
 
+def summary_model(answer):
+    """The model a `sections` answer reports, read back from its
+    summary text, or None for `none`. Raises ValueError when the
+    answer is not a summary: the model read back must give the
+    same text again."""
+    if answer == "none":
+        return None
+    if answer is None or not answer.startswith("ok:"):
+        raise ValueError(str(answer)[:80])
+    text = bytes(int(c) for c in answer[3:].split(",")).decode("ascii")
+    keys = ["id", "qr", "opcode", "aa", "tc", "rd", "ra", "ad", "cd",
+            "rcode", "qd", "an", "ns", "ar", "q", "a", "s", "t"]
+    parts = text.split(";")
+    if len(parts) != len(keys) or any(
+        not p.startswith(k + "=") for p, k in zip(parts, keys)
+    ):
+        raise ValueError(text[:80])
+    f = {k: p[len(k) + 1:] for k, p in zip(keys, parts)}
+
+    def name(t):
+        if t == "ROOT":
+            return []
+        return [bytes(int(c) for c in lab.split("-")) for lab in t.split(".")]
+
+    def entries(t):
+        return t.split("|") if t else []
+
+    def question(e):
+        n, qt, qc = e.split("/")
+        return (name(n), int(qt), int(qc))
+
+    def record(e):
+        n, rt, rc, ttl, data = e.split("/")
+        return (name(n), int(rt), int(rc), int(ttl),
+                bytes(int(c) for c in data.split(",")) if data else b"")
+
+    model = {
+        "id": int(f["id"]),
+        "flags": tuple(int(f[k]) for k in ("qr", "opcode", "aa", "tc", "rd",
+                                           "ra", "rcode", "ad", "cd")),
+        "questions": [question(e) for e in entries(f["q"])],
+        "answers": [record(e) for e in entries(f["a"])],
+        "authorities": [record(e) for e in entries(f["s"])],
+        "additionals": [record(e) for e in entries(f["t"])],
+    }
+    if summary(model) != text:
+        raise ValueError(text[:80])
+    return model
+
+
 def explain(data, want, oracle_view):
     """The smallest set of named rules under which the strict
     oracle's reading of `data`, seen through `oracle_view`,
@@ -1392,16 +1464,22 @@ def run_name_judge(tallies):
 
 def run_message_judge():
     """Judge the fixed cases, accepted and refused, with
-    dns.message.from_wire. The tool's reading is taken from the
-    strict oracle, which the differential above holds it to."""
+    dns.message.from_wire. The tool's reading is its own
+    `sections` answer for each case, read back from the summary
+    text, which shows the flags by name."""
     j = Judge()
     cases = [(label, data) for label, data in fixed_cases()]
     cases += [(label, data) for label, data, _ in full_fixed_cases()]
     cases += rejection_cases()
-    for label, data in cases:
-        tool = message_view(oracle_parse(data))
+    answers, problems = ask_all([request("sections", d) for _, d in cases])
+    for (label, data), answer in zip(cases, answers):
+        try:
+            tool = message_view(summary_model(answer))
+        except ValueError:
+            tool = ("not a summary", str(answer)[:80])
         want = dnspython_message_view(data)
         j.judge(data, tool, want, message_view, f"message judge {label}")
+    j.unnamed += [f"message judge: {p}" for p in problems]
     return j
 
 
@@ -1460,6 +1538,7 @@ def main():
             return 1
 
     fixed = run_fixed()
+    fixed_s = run_fixed_sections()
     rand = run_random(args.seed, args.count)
     mut = run_mutations()
     ffp = run_full_fixed("parse")
@@ -1475,7 +1554,8 @@ def main():
     malf = run_malformed()
 
     tallies = [
-        ("Slice 1 fixed cases", fixed),
+        ("Slice 1 fixed cases, parse", fixed),
+        ("Slice 1 fixed cases, sections", fixed_s),
         ("Slice 1 random well formed messages", rand),
         ("Slice 1 mutations (every truncation, every single byte flip, targeted)", mut),
         ("Full fixed cases, parse", ffp),
@@ -1561,15 +1641,18 @@ def main():
         "  parser and name reader, `dns.wirebase.Parser` and",
         "  `dns.name.from_wire_parser`, in the message layout of RFC 1035",
         "  section 4.1 written in the harness, with record data held opaque, as",
-        "  this layer holds it. Its answer is dnspython's reading, printed as",
-        "  the tool prints, or `none` when dnspython raises.",
+        "  this layer holds it. dnspython's reading, printed as the tool",
+        "  prints, or `none` when dnspython raises, is compared with the tool's",
+        "  `parse` answer for that input.",
         "- The message judge reads the fixed and rejection cases with",
-        "  `dns.message.from_wire`, which also reads record data by type. It",
-        "  compares the identifier, the flags, the questions, and each record's",
-        "  name, type, class and TTL. It runs on those cases only, since that",
-        "  reader also refuses record data that is not well formed for its",
-        "  type, and handles OPT and TSIG records and the UPDATE opcode by",
-        "  their own rules, none of which this layer reads.",
+        "  `dns.message.from_wire`, which also reads record data by type, and",
+        "  compares its reading with the tool's `sections` answer for each",
+        "  case, read back from the summary text: the identifier, the flags",
+        "  by name, the questions, and each record's name, type, class and",
+        "  TTL. It runs on those cases only, since that reader also refuses",
+        "  record data that is not well formed for its type, and handles OPT",
+        "  and TSIG records and the UPDATE opcode by their own rules, none of",
+        "  which this layer reads.",
         "",
         "A disagreement is a named difference when the strict oracle, with the",
         "named rules changed to read as dnspython reads, gives dnspython's",

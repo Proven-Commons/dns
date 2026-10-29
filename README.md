@@ -66,7 +66,8 @@ where they end in `sorry`) and proved in
 |-------|---------|
 | Parsing the printed form of a well formed message gives the message back, all four sections. | `Spec.parse_print` |
 | The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Spec.parse_print_question_only` |
-| For every header whose Z bit (0x40 of the fourth byte) is clear, the fields are read from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give them: AD (0x20) and CD (0x10) are read into the header, not turned away. | `Spec.parseHeader_fields` |
+| Every message the parser accepts has the header its first twelve bytes give, each field from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give it (AD from 0x20 and CD from 0x10 of the fourth byte), and as many entries in each section as that section's count says. | `Spec.parse_reads_header` |
+| The header reader that the parser calls first accepts every twelve header bytes whose Z bit (0x40 of the fourth byte) is clear, and reads the fields from the same bits: AD and CD are read into the header, not turned away. | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes. | `Spec.rejects_z_bit` |
 | The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Spec.reads_rfc_4_1_4` |
 | A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
@@ -99,7 +100,7 @@ the standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`), which a reader can confirm with
 `#print axioms`, or by running
 `lake env lean Proofs/Verify.lean`, which prints the axiom
-list for the headline theorem. The two header theorems
+list for the headline theorem. The three header theorems
 hold for every input. The other theorems, refusals and
 readings, are about one input each, checked in the kernel
 with `decide +kernel`.
@@ -117,11 +118,12 @@ are about.
 - That the parser accepts every message the rules in
   `SPEC.md` allow, and turns away every message they
   forbid. The round trips do not need either. Apart from
-  the header, where `Spec.parseHeader_fields` and
-  `Spec.rejects_z_bit` cover every input, the refusal
-  theorems pin single inputs only, so neither holds in
-  general as a proof. The differential tests in
-  `tests/` check that behaviour instead, and the results
+  the header, where `Spec.parse_reads_header`,
+  `Spec.parseHeader_fields` and `Spec.rejects_z_bit`
+  cover every input, the refusal theorems pin single
+  inputs only, so neither holds in general as a proof.
+  The differential tests in `tests/` check that
+  behaviour instead, and the results
   file records the outcome, including any failure.
 - That a compressed message parses to the message with
   its names expanded. The round trips cover printed
@@ -144,7 +146,9 @@ are about.
   dotted form is neither read nor printed.
 - Reading requests and printing answers in `Main.lean`:
   splitting lines, the decimal parser, the summary text.
-  The tests cover them, malformed requests included.
+  The tests cover them, malformed requests included. The
+  summary shows each header flag by name, so the tests
+  see the flags as read, not only as reprinted.
 - Speed. The code works on lists of bytes, which suits
   proofs, not large data. Each pointer jump walks the
   message, and one name follows at most 16 pointers, so a
@@ -200,9 +204,10 @@ are about.
    mutations at each pointer, and the rejection and
    malformed cases, with counts and any
    failures written to `tests/TEST-RESULTS.md`. When
-   dnspython can be imported, it judges every `parse`
-   input by its name reader and the fixed cases by its
-   message reader, and the results file lists the named
+   dnspython can be imported, its name reader judges the
+   tool's `parse` answer for every input, and its message
+   reader the tool's `sections` answer for each fixed
+   case, and the results file lists the named
    differences; it says so when dnspython is absent.
 3. `lake build`: the library, the proofs, and the tool
    build clean, and `lake env lean Proofs/Verify.lean`

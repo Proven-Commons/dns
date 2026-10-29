@@ -12,8 +12,8 @@
   answers `ok:` and the byte codes of the canonical reprint of
   the parsed message. `sections` answers `ok:` and the byte
   codes of the summary text SPEC.md defines: the identifier,
-  the four section counts, and the entries of the four
-  sections, with every name expanded. Both answer `none` when
+  the header flags, the four section counts, and the entries
+  of the four sections, with every name expanded. Both answer `none` when
   the message is rejected.
 
   A request is an operation, then optionally one space and its
@@ -71,10 +71,20 @@ def showRecord (r : Record) : String :=
     "/" ++ toString r.ttl ++ "/" ++ showCodes r.data
 
 /-- The summary of a message, in the encoding SPEC.md states:
-    the identifier, the four section counts, and the entries of
-    the four sections in order. -/
+    the identifier, the header flags in the order of the third
+    and fourth header bytes, the four section counts, and the
+    entries of the four sections in order. -/
 def summary (m : Message) : String :=
   "id=" ++ toString m.header.id ++
+    ";qr=" ++ toString m.header.qr ++
+    ";opcode=" ++ toString m.header.opcode ++
+    ";aa=" ++ toString m.header.aa ++
+    ";tc=" ++ toString m.header.tc ++
+    ";rd=" ++ toString m.header.rd ++
+    ";ra=" ++ toString m.header.ra ++
+    ";ad=" ++ toString m.header.ad ++
+    ";cd=" ++ toString m.header.cd ++
+    ";rcode=" ++ toString m.header.rcode ++
     ";qd=" ++ toString m.questions.length ++
     ";an=" ++ toString m.answers.length ++
     ";ns=" ++ toString m.authorities.length ++

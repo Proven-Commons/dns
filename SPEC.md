@@ -176,8 +176,9 @@ instead:
   no theorem states it in general.
 - That the parser accepts every message these rules allow,
   and turns away every message they forbid. Apart from the
-  header (`Spec.parseHeader_fields`, `Spec.rejects_z_bit`),
-  the refusal theorems pin one input each.
+  header (`Spec.parse_reads_header`,
+  `Spec.parseHeader_fields`, `Spec.rejects_z_bit`), the
+  refusal theorems pin one input each.
 
 A byte for byte round trip on compressed input is not
 claimed either: a parsed message prints uncompressed, so its
@@ -203,13 +204,18 @@ Two operations:
   codes of a summary text, or `none` when the message is
   turned away. The summary is plain ASCII, in this shape:
 
-  `id=<id>;qd=<n>;an=<n>;ns=<n>;ar=<n>;q=<questions>;a=<answers>;s=<authority records>;t=<additional records>`
+  `id=<id>;qr=<n>;opcode=<n>;aa=<n>;tc=<n>;rd=<n>;ra=<n>;ad=<n>;cd=<n>;rcode=<n>;qd=<n>;an=<n>;ns=<n>;ar=<n>;q=<questions>;a=<answers>;s=<authority records>;t=<additional records>`
 
-  The four counts come first, then the entries of the four
-  sections in message order. Entries within one section are
-  split by `|`. A question entry is `<name>/<qtype>/<qclass>`.
-  A record entry is `<name>/<type>/<class>/<ttl>/<data>`,
-  with the data as byte codes split by commas. A name is the
+  The header flags come first, as read, in the order of the
+  third and fourth header bytes. The `parse` answer reprints
+  the flags in their bit places, so a reader and printer that
+  both moved a flag would reprint the input unchanged; the
+  summary shows each flag by name. The four counts come
+  next, then the entries of the four sections in message
+  order. Entries within one section are split by `|`. A
+  question entry is `<name>/<qtype>/<qclass>`. A record
+  entry is `<name>/<type>/<class>/<ttl>/<data>`, with the
+  data as byte codes split by commas. A name is the
   word `ROOT` for the root, or its labels in order split by
   `.`, each label written as its byte codes split by `-`.
   Every name in the summary is expanded, however it was
@@ -219,7 +225,7 @@ Two operations:
 
 Each property a reader can check in the page (`README.md`)
 names its theorem. The theorems are stated in `Spec.lean`
-and proved in `Proofs/SpecProofs.lean`. The two header
+and proved in `Proofs/SpecProofs.lean`. The three header
 theorems hold for every input. The others after the round
 trips are single inputs, each a named case in the test
 harness; the tests in `tests/` cover each rule on many more
@@ -230,7 +236,8 @@ inputs.
 | Parsing the printed form of a well formed message gives the message back, all four sections | `Spec.parse_print` |
 | Parsing the printed form of a well formed question only message gives the message back | `Spec.parse_print_question_only` |
 | The RFC 1035 section 4.1.4 example, a name that ends in a pointer, parses with the name expanded (one input) | `Spec.reads_rfc_4_1_4` |
-| The header fields are read from the bits the table above names, AD and CD included, for every header whose Z bit is clear | `Spec.parseHeader_fields` |
+| Every message the parser accepts has the header its first twelve bytes give, each field from the bits the table above names, AD and CD included, and as many entries in each section as its count says | `Spec.parse_reads_header` |
+| The header reader the parser calls first accepts every header whose Z bit is clear, and reads the fields from the same bits | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused | `Spec.rejects_pointer_self` |
 | A pointer that aims forward is refused, on an input no other rule refuses (the first question's name points at the second's) | `Spec.rejects_pointer_forward` |
