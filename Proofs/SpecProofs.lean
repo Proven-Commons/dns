@@ -40,7 +40,7 @@ theorem Spec.parseHeader_fields
               cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 },
         q1.toNat * 256 + q2.toNat, a1.toNat * 256 + a2.toNat,
         n1.toNat * 256 + n2.toNat, r1.toNat * 256 + r2.toNat, rest) := by
-  rw [Dns.Proofs.parseHeader_step, if_pos hz]
+  rw [Dns.Proofs.parseHeader_step, ite_eq_left hz]
   rfl
 
 theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
@@ -49,7 +49,7 @@ theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
   have hh : parseHeader (i1 :: i2 :: f1 :: f2 :: rest) = none := by
     match rest with
     | q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest =>
-      rw [Dns.Proofs.parseHeader_step, if_neg (by omega)]
+      rw [Dns.Proofs.parseHeader_step, ite_eq_right (by omega)]
     | [] | [_] | [_, _] | [_, _, _] | [_, _, _, _] | [_, _, _, _, _]
     | [_, _, _, _, _, _] | [_, _, _, _, _, _, _] => rfl
   show (parseHeader (i1 :: i2 :: f1 :: f2 :: rest) >>= _) = none

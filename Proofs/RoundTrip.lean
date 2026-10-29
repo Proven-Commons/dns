@@ -66,8 +66,8 @@ theorem getU32_be32 (n : Nat) (h : n < 4294967296) (r : List UInt8) :
 theorem takeBytes_append (data rest : List UInt8) :
     takeBytes data.length (data ++ rest) = some (data, rest) := by
   unfold takeBytes
-  rw [if_pos (by simp)]
-  simp [List.take_left, List.drop_left]
+  rw [ite_eq_left (by simp)]
+  simp
 
 /-- The value the first flag byte was printed from. -/
 theorem flags1_toNat {h : Header} (hq : h.qr ≤ 1) (ho : h.opcode < 16)
@@ -167,7 +167,7 @@ theorem parseNameGo_printName (nm : Name) (full : List UInt8)
     have hw1 : 1 ≤ budget := hw
     show parseNameGo (f + 1) full budget hops ((0 : UInt8) :: rest) =
       some ([], rest, budget - 1)
-    rw [parseNameGo_step, if_pos rfl, if_pos hw1]
+    rw [parseNameGo_step, ite_eq_left rfl, ite_eq_left hw1]
   | cons l ls ih =>
     obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by
       have h1 : (printName (l :: ls)).length ≥ 1 := by
@@ -192,14 +192,14 @@ theorem parseNameGo_printName (nm : Name) (full : List UInt8)
     have hbud : l.length + 1 ≤ budget := by
       have hw' : wireLen (l :: ls) = l.length + 1 + wireLen ls := rfl
       omega
-    rw [if_neg hb0, if_pos hl1.2, if_pos hbud]
+    rw [ite_eq_right hb0, ite_eq_left hl1.2, ite_eq_left hbud]
     have htake : (l ++ (printName ls ++ rest)).take l.length = l :=
       List.take_left
     have hdrop : (l ++ (printName ls ++ rest)).drop l.length
         = printName ls ++ rest := List.drop_left
     have hlen : ((l ++ (printName ls ++ rest)).take l.length).length
         = l.length := by rw [htake]
-    rw [if_pos hlen, hdrop]
+    rw [ite_eq_left hlen, hdrop]
     have hwls : wireLen ls ≤ budget - (l.length + 1) := by
       have hw' : wireLen (l :: ls) = l.length + 1 + wireLen ls := rfl
       omega
@@ -384,7 +384,7 @@ theorem parseHeader_printHeader {h : Header} (hw : WFHeader h)
   rw [key, parseHeader_step]
   obtain ⟨d1, d2, d3, d4, d5⟩ := flags1_decode hqr hop haa htc hrd
   obtain ⟨e1, e2, e3, e4, e5⟩ := flags2_decode hra had hcd hrc
-  rw [if_pos e5,
+  rw [ite_eq_left e5,
     u16_be16 h.id hid, u16_be16 qd hqd, u16_be16 an han,
     u16_be16 ns hns, u16_be16 ar har,
     d1, d2, d3, d4, d5, e1, e2, e3, e4]
@@ -514,7 +514,7 @@ theorem parse_print {m : Message} (hw : WF m) : parse (print m) = some m := by
   show (if ([] : List UInt8) = [] then
     some ⟨m.header, m.questions, m.answers, m.authorities, m.additionals⟩
     else none) = some m
-  rw [if_pos rfl]
+  rw [ite_eq_left rfl]
 
 /-- The first slice's question-only result, as a corollary of
     the whole message theorem. -/
