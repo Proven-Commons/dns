@@ -42,6 +42,44 @@ theorem Spec.parse_print_question_only {h : Header}
     parse (print ⟨h, qs, [], [], []⟩) =
       some ⟨h, qs, [], [], []⟩ := sorry
 
+/-! ## The header
+
+How the twelve header bytes are read, for every input. The
+round trips above hold for any pair of reader and printer that
+agree with each other, so they do not pin which bit is which;
+these statements do, against RFC 1035 section 4.1.1 and the
+layout of the fourth byte in RFC 6895 section 2. -/
+
+/-- The header fields, read from the twelve header bytes, for
+    any bytes after them, when the Z bit (0x40 of the fourth
+    byte) is clear. The third byte holds QR (0x80), the
+    opcode (0x78), AA (0x04), TC (0x02), and RD (0x01). The
+    fourth holds RA (0x80), Z (0x40), AD (0x20, RFC 4035
+    section 3.2.3), CD (0x10, RFC 4035 section 3.2.2), and
+    the RCODE (0x0F). AD and CD are read like any other flag:
+    a message with either set is not turned away for it. The
+    counts are the next four big endian byte pairs. -/
+theorem Spec.parseHeader_fields
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    (hz : (f2.toNat / 64) % 2 = 0) :
+    parseHeader (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) =
+      some ({ id := i1.toNat * 256 + i2.toNat,
+              qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+              aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+              rd := f1.toNat % 2,
+              ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+              cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 },
+        q1.toNat * 256 + q2.toNat, a1.toNat * 256 + a2.toNat,
+        n1.toNat * 256 + n2.toNat, r1.toNat * 256 + r2.toNat, rest) := sorry
+
+/-- A message whose Z bit (0x40 of the fourth byte) is set is
+    refused, whatever the other bytes hold. Z is the one flag
+    bit RFC 6895 section 2 still reserves. -/
+theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
+    (hz : (f2.toNat / 64) % 2 = 1) :
+    parse (i1 :: i2 :: f1 :: f2 :: rest) = none := sorry
+
 /-! ## Refused inputs
 
 Single inputs the parser refuses, one for each headline rule

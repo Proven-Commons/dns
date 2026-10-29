@@ -3,12 +3,14 @@
 
   A message holds the header fields and four sections: questions,
   answer records, authority records, and additional records. The
-  header is the one in RFC 1035 section 4.1.1: an identifier, QR,
-  the four bit opcode, AA, TC, RD, RA, and the four bit RCODE.
-  The reserved three flag bits are not held. The printer writes
-  them as zero, and the parser turns a message away when one of
-  them is set. The four section counts are not held either. The
-  printer fills them from the four lists.
+  header is the one in RFC 1035 section 4.1.1, with the three
+  bits after RA as RFC 6895 section 2 lays them out: an
+  identifier, QR, the four bit opcode, AA, TC, RD, RA, Z, AD,
+  CD, and the four bit RCODE. AD and CD (RFC 4035 section 3.2)
+  are held as fields. Z, the one bit still reserved, is not
+  held: the printer writes it as zero, and the parser turns a
+  message away when it is set. The four section counts are not
+  held either. The printer fills them from the four lists.
 
   Numbers are held as plain natural numbers, not as fixed width
   types. Well formedness states the wire bounds.
@@ -28,8 +30,8 @@ abbrev Label := List UInt8
 abbrev Name := List Label
 
 /-- The header fields of a message. The flag fields qr, aa, tc,
-    rd, and ra hold 0 or 1 in a well formed header; opcode and
-    rcode hold a four bit value. -/
+    rd, ra, ad, and cd hold 0 or 1 in a well formed header;
+    opcode and rcode hold a four bit value. -/
 structure Header where
   /-- The message identifier, a two byte value. -/
   id : Nat
@@ -45,6 +47,10 @@ structure Header where
   rd : Nat
   /-- RA: recursion available. -/
   ra : Nat
+  /-- AD: authentic data (RFC 4035 section 3.2.3). -/
+  ad : Nat
+  /-- CD: checking disabled (RFC 4035 section 3.2.2). -/
+  cd : Nat
   /-- The four bit response code. -/
   rcode : Nat
   deriving DecidableEq, Repr
@@ -99,11 +105,11 @@ def u32 (a b c d : UInt8) : Nat :=
 def flags1 (h : Header) : UInt8 :=
   (h.qr * 128 + h.opcode * 8 + h.aa * 4 + h.tc * 2 + h.rd).toUInt8
 
-/-- The second flag byte: RA in the top bit, then the three
-    reserved bits, written as zero, then the RCODE in four
-    bits. -/
+/-- The second flag byte (RFC 6895 section 2): RA in the top
+    bit, then Z, the reserved bit, written as zero, then AD,
+    then CD, then the RCODE in four bits. -/
 def flags2 (h : Header) : UInt8 :=
-  (h.ra * 128 + h.rcode).toUInt8
+  (h.ra * 128 + h.ad * 32 + h.cd * 16 + h.rcode).toUInt8
 
 /-- A name in printed form: each label as a length byte and its
     bytes, then a zero byte. -/
@@ -155,7 +161,7 @@ def print (m : Message) : List UInt8 :=
     fit four bits. -/
 def WFHeader (h : Header) : Prop :=
   h.id < 65536 ∧ h.qr ≤ 1 ∧ h.opcode < 16 ∧ h.aa ≤ 1 ∧ h.tc ≤ 1 ∧
-    h.rd ≤ 1 ∧ h.ra ≤ 1 ∧ h.rcode < 16
+    h.rd ≤ 1 ∧ h.ra ≤ 1 ∧ h.ad ≤ 1 ∧ h.cd ≤ 1 ∧ h.rcode < 16
 
 /-- A well formed expanded name: every label holds 1 to 63
     bytes, and the expanded wire length fits the 255 byte

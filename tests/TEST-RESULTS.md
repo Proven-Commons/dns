@@ -6,9 +6,9 @@ Written by `tests/run_tests.py`. Rerun it to check these numbers.
 - dnspython: not present in this environment, no cross check run
 - Lean: Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)
 - Seed: 20261026
-- Slice 1 fixed cases: 17 of 17 agreements
+- Slice 1 fixed cases: 22 of 22 agreements
 - Slice 1 random well formed messages: 400 of 400 agreements
-- Slice 1 mutations (every truncation, every single byte flip, targeted): 64 of 64 agreements
+- Slice 1 mutations (every truncation, every single byte flip, targeted): 66 of 66 agreements
 - Full fixed cases, parse: 5 of 5 agreements
 - Full fixed cases, sections: 5 of 5 agreements
 - Full rejections (parse and sections): 16 of 16 agreements
@@ -18,7 +18,7 @@ Written by `tests/run_tests.py`. Rerun it to check these numbers.
 - Compressed random and suffix messages, sections: 302 of 302 agreements
 - Malformed requests answered error: 17 of 17
 - dnspython cross checks: 0 run (module absent)
-- Differential inputs: 1711
-- Differential agreements: 1711
+- Differential inputs: 1718
+- Differential agreements: 1718
 - Named differences: none
 - Failures: 0

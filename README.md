@@ -62,6 +62,8 @@ where they end in `sorry`) and proved in
 |-------|---------|
 | Parsing the printed form of a well formed message gives the message back, all four sections. | `Spec.parse_print` |
 | The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Spec.parse_print_question_only` |
+| For every header whose Z bit (0x40 of the fourth byte) is clear, the fields are read from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give them: AD (0x20) and CD (0x10) are read into the header, not turned away. | `Spec.parseHeader_fields` |
+| A message with the Z bit set is refused, whatever its other bytes. | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
 | A pointer that aims forward, at a name later in the message, is refused. | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused. | `Spec.rejects_pointer_past_end` |
@@ -72,8 +74,8 @@ where they end in `sorry`) and proved in
 | A pointer cycle that passes through a label is refused: the 255 byte budget turns it away. | `Spec.rejects_pointer_cycle_through_label` |
 
 A message is well formed when its header fields fit their
-widths (the identifier in two bytes, QR, AA, TC, RD, and RA
-each 0 or 1, the opcode and the RCODE in four bits), each
+widths (the identifier in two bytes, QR, AA, TC, RD, RA, AD,
+and CD each 0 or 1, the opcode and the RCODE in four bits), each
 section count fits two bytes, QTYPE, QCLASS, TYPE, and CLASS
 fit two bytes, TTL fits four bytes, each record's data
 length fits two bytes, every label of every expanded name
@@ -88,8 +90,9 @@ the standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`), which a reader can confirm with
 `#print axioms`, or by running
 `lake env lean Proofs/Verify.lean`, which prints the axiom
-list for the headline theorem. The refusal theorems are
-single inputs checked in the kernel with `decide +kernel`.
+list for the headline theorem. The two header theorems
+hold for every input. The other refusal theorems are single
+inputs checked in the kernel with `decide +kernel`.
 Under the round trips, the steps are proved one by one in
 the same file: the two and four byte numbers both ways, the
 name reader on printed names, questions and records on
@@ -103,9 +106,11 @@ are about.
 
 - That the parser accepts every message the rules in
   `SPEC.md` allow, and turns away every message they
-  forbid. The round trips do not need either, and the
-  refusal theorems pin single inputs only, so neither
-  holds in general as a proof. The differential tests in
+  forbid. The round trips do not need either. Apart from
+  the header, where `Spec.parseHeader_fields` and
+  `Spec.rejects_z_bit` cover every input, the refusal
+  theorems pin single inputs only, so neither holds in
+  general as a proof. The differential tests in
   `tests/` check that behaviour instead, and the results
   file records the outcome, including any failure.
 - A byte for byte round trip on compressed input. The

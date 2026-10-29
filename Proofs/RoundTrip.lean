@@ -87,18 +87,22 @@ theorem flags1_decode {h : Header} (hq : h.qr ≤ 1) (ho : h.opcode < 16)
   omega
 
 /-- The value the second flag byte was printed from. -/
-theorem flags2_toNat {h : Header} (ha : h.ra ≤ 1) (hr : h.rcode < 16) :
-    (flags2 h).toNat = h.ra * 128 + h.rcode := by
-  have hb : h.ra * 128 + h.rcode < 256 := by omega
+theorem flags2_toNat {h : Header} (ha : h.ra ≤ 1) (had : h.ad ≤ 1)
+    (hcd : h.cd ≤ 1) (hr : h.rcode < 16) :
+    (flags2 h).toNat = h.ra * 128 + h.ad * 32 + h.cd * 16 + h.rcode := by
+  have hb : h.ra * 128 + h.ad * 32 + h.cd * 16 + h.rcode < 256 := by omega
   simp only [flags2, toUInt8_toNat, Nat.mod_eq_of_lt hb]
 
 /-- The printed second flag byte decodes to the fields it was
-    printed from, and its reserved bits read as zero. -/
-theorem flags2_decode {h : Header} (ha : h.ra ≤ 1) (hr : h.rcode < 16) :
+    printed from, and its Z bit reads as zero. -/
+theorem flags2_decode {h : Header} (ha : h.ra ≤ 1) (had : h.ad ≤ 1)
+    (hcd : h.cd ≤ 1) (hr : h.rcode < 16) :
     (flags2 h).toNat / 128 = h.ra ∧
+    ((flags2 h).toNat / 32) % 2 = h.ad ∧
+    ((flags2 h).toNat / 16) % 2 = h.cd ∧
     (flags2 h).toNat % 16 = h.rcode ∧
-    ((flags2 h).toNat / 16) % 8 = 0 := by
-  rw [flags2_toNat ha hr]
+    ((flags2 h).toNat / 64) % 2 = 0 := by
+  rw [flags2_toNat ha had hcd hr]
   omega
 
 /-- The printed length of a name is its wire length. -/
@@ -350,10 +354,11 @@ theorem parseHeader_step (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8)
     (rest : List UInt8) :
     parseHeader (i1 :: i2 :: f1 :: f2 ::
       q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) =
-      if (f2.toNat / 16) % 8 = 0 then
+      if (f2.toNat / 64) % 2 = 0 then
         some (⟨u16 i1 i2, f1.toNat / 128, (f1.toNat / 8) % 16,
           (f1.toNat / 4) % 2, (f1.toNat / 2) % 2, f1.toNat % 2,
-          f2.toNat / 128, f2.toNat % 16⟩,
+          f2.toNat / 128, (f2.toNat / 32) % 2, (f2.toNat / 16) % 2,
+          f2.toNat % 16⟩,
           u16 q1 q2, u16 a1 a2, u16 n1 n2, u16 r1 r2, rest)
       else none := rfl
 
@@ -364,7 +369,7 @@ theorem parseHeader_printHeader {h : Header} (hw : WFHeader h)
     (hns : ns < 65536) (har : ar < 65536) (rest : List UInt8) :
     parseHeader (printHeader h qd an ns ar ++ rest) =
       some (h, qd, an, ns, ar, rest) := by
-  obtain ⟨hid, hqr, hop, haa, htc, hrd, hra, hrc⟩ := hw
+  obtain ⟨hid, hqr, hop, haa, htc, hrd, hra, had, hcd, hrc⟩ := hw
   have key : printHeader h qd an ns ar ++ rest =
       (h.id / 256).toUInt8 :: h.id.toUInt8 :: flags1 h :: flags2 h ::
       (qd / 256).toUInt8 :: qd.toUInt8 ::
@@ -374,11 +379,11 @@ theorem parseHeader_printHeader {h : Header} (hw : WFHeader h)
     simp [printHeader, be16]
   rw [key, parseHeader_step]
   obtain ⟨d1, d2, d3, d4, d5⟩ := flags1_decode hqr hop haa htc hrd
-  obtain ⟨e1, e2, e3⟩ := flags2_decode hra hrc
-  rw [if_pos e3,
+  obtain ⟨e1, e2, e3, e4, e5⟩ := flags2_decode hra had hcd hrc
+  rw [if_pos e5,
     u16_be16 h.id hid, u16_be16 qd hqd, u16_be16 an han,
     u16_be16 ns hns, u16_be16 ar har,
-    d1, d2, d3, d4, d5, e1, e2]
+    d1, d2, d3, d4, d5, e1, e2, e3, e4]
 
 /-- The whole message round trip: parsing the printed form of a
     well formed message gives the message back. -/

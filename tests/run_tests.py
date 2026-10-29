@@ -7,10 +7,12 @@ Slice 1 sections, kept and re-run:
    section 3.1 in plain form and in a pointer shape that loops,
    a two label query, a root name question, the longest legal
    label, a name at the 255 byte wire bound and one past it, a
-   response header, an empty question list, and the rejection
-   shapes (a reserved bit set, a short header, a label byte of
-   64, bytes after the last question, a count that does not
-   match the bytes, a label cut short). Slice 1 turned a nonzero
+   response header, an empty question list, the AD and CD
+   header bits (RFC 4035 section 3.2) set alone and in the
+   RD+AD, RD+CD and RA+AD shapes resolvers send, which are
+   read, and the rejection shapes (the Z bit set, a short
+   header, a label byte of 64, bytes after the last question,
+   a count that does not match the bytes, a label cut short). Slice 1 turned a nonzero
    answer count away; slice 2 reads records, so that case moved
    to the whole message sections below.
 
@@ -187,9 +189,12 @@ def be32(n):
     return bytes([(n >> 24) % 256, (n >> 16) % 256, (n >> 8) % 256, n % 256])
 
 
-def header_bytes(mid, qr, opcode, aa, tc, rd, ra, rcode, qd, an=0, ns=0, ar=0):
+def header_bytes(mid, qr, opcode, aa, tc, rd, ra, rcode, qd, an=0, ns=0, ar=0,
+                 ad=0, cd=0):
+    # The fourth byte, RFC 6895 section 2: RA, Z (always written
+    # as zero here), AD, CD, then the RCODE.
     f1 = qr * 128 + opcode * 8 + aa * 4 + tc * 2 + rd
-    f2 = ra * 128 + rcode
+    f2 = ra * 128 + ad * 32 + cd * 16 + rcode
     return (
         be16(mid) + bytes([f1, f2]) + be16(qd) + be16(an) + be16(ns) + be16(ar)
     )
@@ -219,13 +224,20 @@ def record_bytes(labels, rtype, rclass, ttl, data):
     )
 
 
-def model_bytes(model):
-    flags = model["flags"]
-    out = header_bytes(
-        model["id"], *flags,
+def model_header(model):
+    """The header bytes of a model. Its flags are the tuple
+    (qr, opcode, aa, tc, rd, ra, rcode, ad, cd)."""
+    qr, opcode, aa, tc, rd, ra, rcode, ad, cd = model["flags"]
+    return header_bytes(
+        model["id"], qr, opcode, aa, tc, rd, ra, rcode,
         len(model["questions"]), len(model["answers"]),
         len(model["authorities"]), len(model["additionals"]),
+        ad=ad, cd=cd,
     )
+
+
+def model_bytes(model):
+    out = model_header(model)
     for q in model["questions"]:
         out += question_bytes(*q)
     for section in ("answers", "authorities", "additionals"):
@@ -326,8 +338,11 @@ def oracle_parse(data):
         f1 % 2,
         f2 // 128,
         f2 % 16,
+        (f2 // 32) % 2,
+        (f2 // 16) % 2,
     )
-    if (f2 // 16) % 8 != 0:
+    # Z (0x40) is the one reserved bit; AD and CD are read.
+    if (f2 // 64) % 2 != 0:
         return None
     qd = data[4] * 256 + data[5]
     an = data[6] * 256 + data[7]
@@ -427,8 +442,8 @@ class Tally:
             self.failures.append(f"{label}: want {want}, got {answer}")
 
 
-QUERY = (0, 0, 0, 0, 1, 0, 0)  # qr opcode aa tc rd ra rcode
-RESPONSE = (1, 0, 1, 0, 0, 1, 0)
+QUERY = (0, 0, 0, 0, 1, 0, 0, 0, 0)  # qr opcode aa tc rd ra rcode ad cd
+RESPONSE = (1, 0, 1, 0, 0, 1, 0, 0, 0)
 
 
 def qmodel(mid, flags, questions):
@@ -471,14 +486,30 @@ def fixed_cases():
     cases.append(("name-over-bound", model_bytes(qmodel(7, QUERY, [(over, 1, 1)]))))
     # A response header with one question.
     cases.append(
-        ("response", model_bytes(qmodel(9, (1, 0, 0, 0, 0, 1, 0), [([b"x"], 1, 1)])))
+        ("response", model_bytes(qmodel(9, (1, 0, 0, 0, 0, 1, 0, 0, 0), [([b"x"], 1, 1)])))
     )
     # No questions at all.
     cases.append(("no-questions", model_bytes(qmodel(9, QUERY, []))))
-    # A reserved flag bit set (byte 3, a middle reserved bit).
+    # The AD bit (0x20 of byte 3) and the CD bit (0x10), RFC 4035
+    # section 3.2, each set alone: read into the header.
+    for label, bit in (("ad-bit", 0x20), ("cd-bit", 0x10)):
+        data = bytearray(model_bytes(qmodel(7, (0, 0, 0, 0, 0, 0, 0, 0, 0), [([b"x"], 1, 1)])))
+        data[3] |= bit
+        cases.append((label, bytes(data)))
+    # The flag bytes resolvers send: an RD+AD query (01 20, as
+    # dig sends by default, RFC 6840 section 5.7), an RD+CD query
+    # (01 10), and a validating resolver's RA+AD response (81 a0).
+    for label, f1, f2 in (("rd-ad-query", 0x01, 0x20),
+                          ("rd-cd-query", 0x01, 0x10),
+                          ("ra-ad-response", 0x81, 0xA0)):
+        data = bytearray(model_bytes(qmodel(7, QUERY, [([b"example", b"com"], 1, 1)])))
+        data[2], data[3] = f1, f2
+        cases.append((label, bytes(data)))
+    # The Z bit (0x40 of byte 3), the one reserved flag bit:
+    # turned away.
     bad = bytearray(model_bytes(qmodel(7, QUERY, [([b"x"], 1, 1)])))
-    bad[3] |= 0x20
-    cases.append(("reserved-bit", bytes(bad)))
+    bad[3] |= 0x40
+    cases.append(("z-bit", bytes(bad)))
     # A truncated header.
     cases.append(("short-header", model_bytes(qmodel(7, QUERY, [([b"x"], 1, 1)]))[:11]))
     # A label length byte of 64, a reserved form.
@@ -536,6 +567,8 @@ def random_question_message(rng):
         rng.randint(0, 1),
         rng.randint(0, 1),
         rng.randint(0, 15),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
     )
     questions = [
         (name(), rng.randint(0, 65535), rng.randint(0, 65535))
@@ -575,9 +608,10 @@ def run_mutations():
     lab64 = bytearray(base)
     lab64[12] = 64
     targeted.append(("label-64", bytes(lab64)))
-    res = bytearray(base)
-    res[3] |= 0x10
-    targeted.append(("reserved", bytes(res)))
+    for label, bit in (("z", 0x40), ("ad", 0x20), ("cd", 0x10)):
+        res = bytearray(base)
+        res[3] |= bit
+        targeted.append((label, bytes(res)))
     low = bytearray(base)
     low[5] = 0
     targeted.append(("count-low", bytes(low)))
@@ -822,6 +856,8 @@ def random_model(rng):
         rng.randint(0, 1),
         rng.randint(0, 1),
         rng.randint(0, 15),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
     )
     return {
         "id": rng.randint(0, 65535),
@@ -865,13 +901,7 @@ def compress_message(model):
     first label length byte sits. Each new name writes the
     labels before its longest known suffix, then a pointer to
     that suffix, or a zero byte when no suffix is known."""
-    out = bytearray(
-        header_bytes(
-            model["id"], *model["flags"],
-            len(model["questions"]), len(model["answers"]),
-            len(model["authorities"]), len(model["additionals"]),
-        )
-    )
+    out = bytearray(model_header(model))
     known = {}
 
     def write_name(labels):

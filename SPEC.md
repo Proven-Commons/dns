@@ -15,7 +15,7 @@ A message starts with twelve bytes, RFC 1035 section 4.1.1:
 |-------|-------|
 | 0, 1 | ID, the message identifier |
 | 2 | QR (top bit), opcode (next four bits), AA, TC, RD (last bit) |
-| 3 | RA (top bit), the reserved three bits, RCODE (last four bits) |
+| 3 | RA (0x80), Z (0x40), AD (0x20), CD (0x10), RCODE (last four bits) |
 | 4, 5 | QDCOUNT, the number of questions |
 | 6, 7 | ANCOUNT, the number of answer records |
 | 8, 9 | NSCOUNT, the number of authority records |
@@ -27,14 +27,24 @@ the header in the order above. The input must end with the
 last entry of the last section. Leftover bytes, and any entry
 cut short, turn the message away.
 
+The fourth byte follows the layout in RFC 6895 section 2.
+RFC 1035 reserved the three bits after RA as Z. RFC 4035
+section 3.2 has since defined two of them: AD, authentic data
+(0x20), and CD, checking disabled (0x10). Only Z (0x40) is
+still reserved.
+
 The data model holds the identifier and the flag fields. QR,
-AA, TC, RD, and RA are held as numbers, 0 or 1 in a well formed
-header. The opcode and the RCODE are held as numbers that fit
-four bits. The reserved three bits are not held: the printer
-writes them as zero, and reading turns the message away when
-any of them is set, as the RFC asks senders to set them to
-zero. The four counts are not held: the printer fills them
-from the four lists.
+AA, TC, RD, RA, AD, and CD are held as numbers, 0 or 1 in a
+well formed header. The opcode and the RCODE are held as
+numbers that fit four bits. A message with AD or CD set is
+read like any other: an RD+AD query (flag bytes `01 20`, which
+dig sends by default, RFC 6840 section 5.7), an RD+CD query
+(`01 10`), and a validating resolver's RA+AD response
+(`81 a0`) are all read, and the printer writes both bits back.
+Z is not held: the printer writes it as zero, and reading
+turns the message away when it is set, as RFC 1035 asks
+senders to set it to zero. The four counts are not held: the
+printer fills them from the four lists.
 
 ## Names and compression
 
@@ -134,8 +144,8 @@ slice's result as a corollary, for a message whose answer,
 authority, and additional sections are empty.
 
 Well formed means: the header fields fit their widths (the
-identifier in two bytes, QR, AA, TC, RD, and RA each 0 or 1,
-the opcode and the RCODE in four bits); each section count
+identifier in two bytes, QR, AA, TC, RD, RA, AD, and CD each 0
+or 1, the opcode and the RCODE in four bits); each section count
 fits two bytes; QTYPE, QCLASS, TYPE, and CLASS fit two bytes;
 TTL fits four bytes; every record's data length fits two
 bytes; every label of every expanded name holds 1 to 63
@@ -188,7 +198,8 @@ Two operations:
 
 Each property a reader can check in the page (`README.md`)
 names its theorem. The theorems are stated in `Spec.lean`
-and proved in `Proofs/SpecProofs.lean`. The refusal theorems
+and proved in `Proofs/SpecProofs.lean`. The two header
+theorems hold for every input. The other refusal theorems
 are single inputs, one for each named rejection case in the
 test harness; the tests in `tests/` cover each rule on many
 more inputs.
@@ -197,6 +208,8 @@ more inputs.
 |----------|---------|
 | Parsing the printed form of a well formed message gives the message back, all four sections | `Spec.parse_print` |
 | Parsing the printed form of a well formed question only message gives the message back | `Spec.parse_print_question_only` |
+| The header fields are read from the bits the table above names, AD and CD included, for every header whose Z bit is clear | `Spec.parseHeader_fields` |
+| A message with the Z bit set is refused, whatever its other bytes | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused | `Spec.rejects_pointer_self` |
 | A pointer that aims forward is refused | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused | `Spec.rejects_pointer_past_end` |

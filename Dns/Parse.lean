@@ -186,16 +186,19 @@ def parseRecords (n : Nat) (bs : List UInt8) :
   parseRecordsIn n bs bs
 
 /-- Read the twelve header bytes. Returns the header, the four
-    section counts, and the rest of the input. A set reserved
-    flag bit gives `none`. -/
+    section counts, and the rest of the input. The Z bit (0x40
+    of the fourth byte), the one flag bit still reserved, gives
+    `none` when set. AD (0x20) and CD (0x10) are read into the
+    header. -/
 def parseHeader : List UInt8 →
     Option (Header × Nat × Nat × Nat × Nat × List UInt8)
   | i1 :: i2 :: f1 :: f2 ::
     q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest =>
-    if (f2.toNat / 16) % 8 = 0 then
+    if (f2.toNat / 64) % 2 = 0 then
       some (⟨u16 i1 i2, f1.toNat / 128, (f1.toNat / 8) % 16,
         (f1.toNat / 4) % 2, (f1.toNat / 2) % 2, f1.toNat % 2,
-        f2.toNat / 128, f2.toNat % 16⟩,
+        f2.toNat / 128, (f2.toNat / 32) % 2, (f2.toNat / 16) % 2,
+        f2.toNat % 16⟩,
         u16 q1 q2, u16 a1 a2, u16 n1 n2, u16 r1 r2, rest)
     else none
   | _ => none
