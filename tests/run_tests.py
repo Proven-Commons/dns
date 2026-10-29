@@ -1046,7 +1046,8 @@ def rejection_cases():
     )
     cases.append(("seventeen-hops-through-labels", wire))
 
-    # The re-review's 65,523 byte message: one record's data
+    # A 65,523 byte message in the shape of the re-review's
+    # (whose own message was 65,524 bytes): one record's data
     # holds a chain of 8,180 backward pointers, and 4,095
     # answer names point at its head. Every rule but the
     # pointer limit allows it; the first answer name is
