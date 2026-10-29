@@ -65,7 +65,7 @@ where they end in `sorry`) and proved in
 | For every header whose Z bit (0x40 of the fourth byte) is clear, the fields are read from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give them: AD (0x20) and CD (0x10) are read into the header, not turned away. | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes. | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
-| A pointer that aims forward, at a name later in the message, is refused. | `Spec.rejects_pointer_forward` |
+| A pointer that aims forward, at a name later in the message, is refused, on an input where no other rule refuses it: the first question's name points at the second's. | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused. | `Spec.rejects_pointer_past_end` |
 | A pointer into the middle of a label is refused: the byte it lands on stands in the reserved range for a length byte. | `Spec.rejects_pointer_mid_label` |
 | A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Spec.rejects_reserved_in_record` |

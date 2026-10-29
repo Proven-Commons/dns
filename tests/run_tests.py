@@ -792,10 +792,15 @@ def rejection_cases():
     wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + pointer(12) + be16(1) + be16(1)
     cases.append(("pointer-self", wire))
 
-    # A forward pointer: offset 12 points at offset 32, where
-    # a name does sit later in the message.
-    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + pointer(32) + be16(1) + be16(1)
-    wire += bytes(32 - len(wire)) + name_bytes([b"later"]) + be16(1) + be16(1)
+    # A forward pointer: two questions, the first named by a
+    # pointer to offset 18, where the second question's name
+    # sits. Every byte is counted and the target lies inside
+    # the message, so only the backwards rule refuses it; a
+    # reader that allowed forward pointers would read both
+    # names as later.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2) + pointer(18) + be16(1) + be16(1)
+    wire += question_bytes([b"later"], 1, 1)
+    assert wire.hex() == "000701000002000000000000c01200010001056c617465720000010001"
     cases.append(("pointer-forward", wire))
 
     # A pointer past the end of the message.

@@ -62,10 +62,9 @@ theorem Spec.rejects_pointer_self :
 
 
 theorem Spec.rejects_pointer_forward :
-    (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
-      192, 32, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 5, 108, 97, 116,
-      101, 114, 0, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+    (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      192, 18, 0, 1, 0, 1, 5, 108, 97, 116, 101, 114,
+      0, 0, 1, 0, 1] : List UInt8)).isSome = false := by
   decide +kernel
 
 

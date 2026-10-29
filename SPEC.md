@@ -217,7 +217,7 @@ more inputs.
 | The header fields are read from the bits the table above names, AD and CD included, for every header whose Z bit is clear | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused | `Spec.rejects_pointer_self` |
-| A pointer that aims forward is refused | `Spec.rejects_pointer_forward` |
+| A pointer that aims forward is refused, on an input no other rule refuses (the first question's name points at the second's) | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused | `Spec.rejects_pointer_past_end` |
 | A pointer into the middle of a label is refused | `Spec.rejects_pointer_mid_label` |
 | A reserved length form in a record name is refused | `Spec.rejects_reserved_in_record` |

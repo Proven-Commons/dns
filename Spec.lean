@@ -98,15 +98,19 @@ theorem Spec.rejects_pointer_self :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       192, 12, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
 
-/-- A pointer that aims forward is refused. The name at
-    offset 12 points at offset 32, later in the message,
-    where a name does sit; a target must be strictly
-    earlier than the pointer. -/
+/-- A pointer that aims forward is refused. The message
+    holds two questions and nothing else. The first
+    question's name at offset 12 is a pointer to offset 18,
+    where the second question's name, the label later,
+    sits. Every byte is counted and every target lies
+    inside the message, so only the rule that a target be
+    strictly earlier than the pointer turns it away: a
+    reader that allowed forward pointers would read both
+    names as later. -/
 theorem Spec.rejects_pointer_forward :
-    (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
-      192, 32, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 5, 108, 97, 116,
-      101, 114, 0, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+    (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      192, 18, 0, 1, 0, 1, 5, 108, 97, 116, 101, 114,
+      0, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
 
 /-- A pointer whose target lies past the end of the
     message is refused. The name at offset 12 points at
