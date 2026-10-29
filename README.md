@@ -62,6 +62,7 @@ where they end in `sorry`) and proved in
 |-------|---------|
 | Parsing the printed form of a well formed message gives the message back, all four sections. | `Spec.parse_print` |
 | The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Spec.parse_print_question_only` |
+| The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Spec.reads_rfc_4_1_4` |
 | For every header whose Z bit (0x40 of the fourth byte) is clear, the fields are read from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give them: AD (0x20) and CD (0x10) are read into the header, not turned away. | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes. | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
@@ -116,12 +117,18 @@ are about.
   general as a proof. The differential tests in
   `tests/` check that behaviour instead, and the results
   file records the outcome, including any failure.
-- A byte for byte round trip on compressed input. The
-  round trip is at the level of the message value: parsing
-  a compressed message yields the expanded message, whose
-  printing is the uncompressed form, so the printed form
-  of a parsed message need not equal a compressed input
-  byte for byte. No such claim is made.
+- That a compressed message parses to the message with
+  its names expanded. The round trips cover printed
+  messages, which hold no pointer, so they never read
+  one. `Spec.reads_rfc_4_1_4` and
+  `Spec.reads_pointer_mid_label` state it for one input
+  each; the differential tests check it on many more,
+  and the results file counts how many of them hold a
+  pointer.
+- A byte for byte round trip on compressed input. A
+  parsed message prints uncompressed, so its printed form
+  need not equal a compressed input. No such claim is
+  made.
 - Anything inside record data. Record data is opaque bytes
   at this layer; names that appear inside it, in record
   types that carry them, are not read or expanded.

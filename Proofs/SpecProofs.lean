@@ -55,6 +55,20 @@ theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
   rw [hh]
   rfl
 
+theorem Spec.reads_rfc_4_1_4 :
+    parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,
+      0, 1, 0, 1, 3, 70, 79, 79, 192, 12, 0, 1,
+      0, 1] : List UInt8) =
+      some { header := { id := 4660, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 },
+                           { name := [[70, 79, 79], [70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := by
+  decide +kernel
+
 theorem Spec.rejects_pointer_self :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       192, 12, 0, 1, 0, 1] : List UInt8)).isSome = false := by

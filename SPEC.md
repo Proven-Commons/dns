@@ -160,16 +160,23 @@ TTL fits four bytes; every record's data length fits two
 bytes; every label of every expanded name holds 1 to 63
 bytes; and every expanded name fits the 255 byte wire bound.
 
-A note on compressed input: parsing a compressed message
-yields the expanded message, and its printing is the
-uncompressed form of that message. So the printed form of a
-parsed message need not equal a compressed input byte for
-byte, and no such claim is made. The round trip above is
-about the message value.
+The round trip is about printed messages, which hold no
+compression, so it never reads a pointer. These are not
+proved, and the differential tests in `tests/` check them
+instead:
 
-That the parser accepts every message these rules allow, and
-turns away every message they forbid, is not proved. The
-differential tests in `tests/` check that behaviour instead.
+- That a compressed message parses to the message with its
+  names expanded. `Spec.reads_rfc_4_1_4` and
+  `Spec.reads_pointer_mid_label` state it for one input each;
+  no theorem states it in general.
+- That the parser accepts every message these rules allow,
+  and turns away every message they forbid. Apart from the
+  header (`Spec.parseHeader_fields`, `Spec.rejects_z_bit`),
+  the refusal theorems pin one input each.
+
+A byte for byte round trip on compressed input is not
+claimed either: a parsed message prints uncompressed, so its
+printed form need not equal a compressed input.
 
 ## The command-line tool
 
@@ -217,6 +224,7 @@ more inputs.
 |----------|---------|
 | Parsing the printed form of a well formed message gives the message back, all four sections | `Spec.parse_print` |
 | Parsing the printed form of a well formed question only message gives the message back | `Spec.parse_print_question_only` |
+| The RFC 1035 section 4.1.4 example, a name that ends in a pointer, parses with the name expanded (one input) | `Spec.reads_rfc_4_1_4` |
 | The header fields are read from the bits the table above names, AD and CD included, for every header whose Z bit is clear | `Spec.parseHeader_fields` |
 | A message with the Z bit set is refused, whatever its other bytes | `Spec.rejects_z_bit` |
 | A pointer that aims at its own position is refused | `Spec.rejects_pointer_self` |

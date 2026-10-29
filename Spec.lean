@@ -80,6 +80,32 @@ theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
     (hz : (f2.toNat / 64) % 2 = 1) :
     parse (i1 :: i2 :: f1 :: f2 :: rest) = none := sorry
 
+/-! ## A compressed name, read
+
+The round trips cover printed messages, which hold no
+pointer. This statement reads one, on one input; no theorem
+states that every compressed message reads to its expanded
+form. -/
+
+/-- The example of RFC 1035 section 4.1.4, placed in a
+    message: the first question's name F.ISI.ARPA starts at
+    offset 12, right after the header, and the second
+    question's name is the label FOO and a pointer to offset
+    12. The message parses, with the second name expanded to
+    FOO.F.ISI.ARPA. -/
+theorem Spec.reads_rfc_4_1_4 :
+    parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,
+      0, 1, 0, 1, 3, 70, 79, 79, 192, 12, 0, 1,
+      0, 1] : List UInt8) =
+      some { header := { id := 4660, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 },
+                           { name := [[70, 79, 79], [70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := sorry
+
 /-! ## Refused inputs
 
 Single inputs the parser refuses, one for each headline rule
