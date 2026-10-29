@@ -27,17 +27,22 @@ Slice 2 sections:
    example placed in a real message (the first name at offset
    12, the second name a label plus a pointer back to offset
    12), an answer record whose name is a bare pointer to the
-   question name, a pointer chain of length two, and records in
-   the authority and additional sections. Checked through both
+   question name, a pointer chain of length two, a name that
+   follows 16 pointers (the limit), and records in the
+   authority and additional sections. Checked through both
    the `parse` operation (the canonical reprint, names
    expanded) and the `sections` operation (the summary text).
 
 4. Whole message rejections: a pointer to itself, a forward
    pointer, a pointer past the end, a pointer into the middle
-   of a label, a cycle that passes through a label, a reserved
-   length form in a record name, a data length running past
-   the end, and an expanded name over 255 bytes reached by
-   chaining.
+   of a label, a cycle that passes through a label (ended by
+   the 16 pointer limit) and one through a 63 byte label
+   (ended by the 255 byte budget), a reserved length form in
+   a record name, a data length running past the end, an
+   expanded name over 255 bytes reached by chaining, a name
+   that follows 17 pointers, and a 65,523 byte message whose
+   4,095 answer names each point into an 8,180 pointer
+   chain.
 
 5. Random whole messages (mixed sections), printed and read
    back, and the same messages run through a harness
@@ -278,18 +283,23 @@ def summary(model):
     )
 
 
+MAX_HOPS = 16
+
+
 def read_name(data, pos):
     """Read a name at pos by the plan rules. Returns
     (labels, position after the name at the place it was read),
-    or None. The step cap mirrors the Lean fuel."""
+    or None. At most MAX_HOPS pointers are followed. The step
+    cap mirrors the Lean fuel, which no reading reaches."""
     labels = []
     budget = 255
+    hops = 0
     nextpos = None
     cur = pos
     steps = 0
     while True:
         steps += 1
-        if steps > len(data) + 257:
+        if steps > 256:
             return None
         if cur >= len(data):
             return None
@@ -315,6 +325,9 @@ def read_name(data, pos):
                 return None
             target = (b - 192) * 256 + data[cur + 1]
             if not (target < cur and target < len(data)):
+                return None
+            hops += 1
+            if hops > MAX_HOPS:
                 return None
             if nextpos is None:
                 nextpos = cur + 2
@@ -463,7 +476,10 @@ def fixed_cases():
     cases.append(("rfc-name", model_bytes(qmodel(0x1234, QUERY, [(isi, 1, 1)]))))
     # The same start with a compression pointer after the first
     # two labels, pointing back at the name's own start: reading
-    # it loops, and the fuel runs out, so it is turned away.
+    # it loops through F and ISI. Each pass spends 6 bytes of
+    # the 255 byte budget, so the budget alone would end it on
+    # the 43rd pass; the 16 pointer limit ends it first, at the
+    # 17th pointer. The step bound is never reached.
     pointed = (
         header_bytes(0x1234, 0, 0, 0, 0, 1, 0, 0, 1)
         + bytes([1]) + b"F" + bytes([3]) + b"ISI" + bytes([0xC0, 0x0C])
@@ -639,6 +655,42 @@ def pointer(target):
     return bytes([0xC0 | (target // 256), target % 256])
 
 
+def hop_chain(hops):
+    """A response whose second answer name follows `hops`
+    pointers. The question name is the label a at offset 12.
+    The first answer's name is a pointer to it, and its data
+    holds hops - 1 pointers, each to the one before, the first
+    to offset 12. The second answer's name is a pointer to the
+    last of them."""
+    k = hops - 1
+    wire = header_bytes(7, 1, 0, 0, 0, 0, 0, 0, 1, an=2)
+    wire += question_bytes([b"a"], 1, 1)
+    wire += pointer(12) + be16(16) + be16(1) + be32(0) + be16(2 * k)
+    start = len(wire)
+    chain = b""
+    for i in range(k):
+        chain += pointer(12 if i == 0 else start + 2 * (i - 1))
+    wire += chain
+    wire += pointer(start + 2 * (k - 1)) + be16(16) + be16(1) + be32(0) + be16(0)
+    return wire
+
+
+def long_pointer_chain(links, names):
+    """A message whose first answer's data is a chain of
+    `links` pointers, each to the one before, the first to the
+    root name at offset 12, followed by `names` answers whose
+    names point at the last link."""
+    wire = header_bytes(7, 1, 0, 0, 0, 0, 0, 0, 0, an=1 + names)
+    wire += bytes([0]) + be16(16) + be16(1) + be32(0) + be16(2 * links)
+    start = len(wire)
+    for i in range(links):
+        wire += pointer(12 if i == 0 else start + 2 * (i - 1))
+    head = start + 2 * (links - 1)
+    for _ in range(names):
+        wire += pointer(head) + be16(16) + be16(1) + be32(0) + be16(0)
+    return wire
+
+
 def full_fixed_cases():
     """Accepted whole messages, as (label, wire bytes, model).
     The wire bytes are hand built; the model is what both
@@ -681,6 +733,15 @@ def full_fixed_cases():
          ([b"d", b"c", b"a", b"b"], 1, 1)],
     )
     cases.append(("pointer-chain", wire, model))
+
+    # A name that follows exactly 16 pointers, the limit: read.
+    model = qmodel(7, (1, 0, 0, 0, 0, 0, 0, 0, 0), [([b"a"], 1, 1)])
+    chain = hop_chain(16)
+    model["answers"] = [
+        ([b"a"], 16, 1, 0, chain[31:61]),
+        ([b"a"], 16, 1, 0, b""),
+    ]
+    cases.append(("sixteen-hops", chain, model))
 
     # Records in the authority and additional sections, built
     # plainly by the model builder.
@@ -790,16 +851,35 @@ def rejection_cases():
     # Reading it walks label, pointer, label, pointer, and
     # the strictly backwards rule alone does not stop that:
     # the pointer at offset 10 does point back to offset 5.
-    # What turns it away is the 255 byte budget. Each pass
-    # through the label spends 5 bytes, so the budget is
-    # spent after 51 passes, at step 104 of this 18 byte
-    # message, with 171 of the 275 fuel steps still unspent.
-    # The oracle rejects it by the same budget rule, and both
-    # operations must answer none.
+    # What turns it away is the 16 pointer limit: the 17th
+    # pointer is refused after 16 passes through the label,
+    # which spent 80 of the 255 budget bytes. (Without the
+    # limit, the budget would end it after 51 passes.) The
+    # oracle rejects it by the same rule, and both operations
+    # must answer none.
     wire = header_bytes(0, 0, 0, 0, 0, 0, 0, 0, 4,
                         an=0x6162, ns=0x6364, ar=0xC005)
     wire += pointer(5) + be16(1) + be16(1)
     cases.append(("pointer-cycle-through-label", wire))
+
+    # A cycle through a 63 byte label, which the budget ends
+    # before the pointer limit: the name at offset 12 is the
+    # label and a pointer back to offset 12. Each pass spends
+    # 64 bytes, so the fourth pass is turned away after 3
+    # pointers.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1)
+    wire += bytes([63]) + b"a" * 63 + pointer(12) + be16(1) + be16(1)
+    cases.append(("pointer-cycle-budget", wire))
+
+    # A name that follows 17 pointers, one past the limit.
+    cases.append(("seventeen-hops", hop_chain(17)))
+
+    # The re-review's 65,523 byte message: one record's data
+    # holds a chain of 8,180 backward pointers, and 4,095
+    # answer names point at its head. Every rule but the
+    # pointer limit allows it; the first answer name is
+    # turned away at its 17th pointer.
+    cases.append(("long-pointer-chain", long_pointer_chain(8180, 4095)))
     return cases
 
 

@@ -114,15 +114,15 @@ theorem printName_length : ∀ (nm : Name), (printName nm).length = wireLen nm
 
 /-- One step of the name reader on a byte and what follows it,
     stated for rewriting. -/
-theorem parseNameGo_step (fuel : Nat) (full : List UInt8) (budget : Nat)
+theorem parseNameGo_step (fuel : Nat) (full : List UInt8) (budget hops : Nat)
     (b : UInt8) (rest : List UInt8) :
-    parseNameGo (fuel + 1) full budget (b :: rest) =
+    parseNameGo (fuel + 1) full budget hops (b :: rest) =
       if b = 0 then
         if 1 ≤ budget then some ([], rest, budget - 1) else none
       else if b.toNat ≤ 63 then
         if b.toNat + 1 ≤ budget then
           if (rest.take b.toNat).length = b.toNat then
-            match parseNameGo fuel full (budget - (b.toNat + 1))
+            match parseNameGo fuel full (budget - (b.toNat + 1)) hops
                 (rest.drop b.toNat) with
             | some (ls, rest', remaining) =>
               some (rest.take b.toNat :: ls, rest', remaining)
@@ -133,10 +133,10 @@ theorem parseNameGo_step (fuel : Nat) (full : List UInt8) (budget : Nat)
         match rest with
         | [] => none
         | c :: after =>
-          if (b.toNat - 192) * 256 + c.toNat <
+          if 0 < hops ∧ (b.toNat - 192) * 256 + c.toNat <
                 full.length - (b :: c :: after).length ∧
               (b.toNat - 192) * 256 + c.toNat < full.length then
-            match parseNameGo fuel full budget
+            match parseNameGo fuel full budget (hops - 1)
                 (full.drop ((b.toNat - 192) * 256 + c.toNat)) with
             | some (ls, _, remaining) => some (ls, after, remaining)
             | none => none
@@ -149,11 +149,11 @@ theorem parseNameGo_step (fuel : Nat) (full : List UInt8) (budget : Nat)
     a printed name holds no pointer byte. The remaining budget
     is the starting budget minus the name's wire length. -/
 theorem parseNameGo_printName (nm : Name) (full : List UInt8)
-    (budget fuel : Nat) (rest : List UInt8)
+    (budget hops fuel : Nat) (rest : List UInt8)
     (hl : ∀ l ∈ nm, 1 ≤ l.length ∧ l.length ≤ 63)
     (hw : wireLen nm ≤ budget)
     (hf : (printName nm).length < fuel) :
-    parseNameGo fuel full budget (printName nm ++ rest) =
+    parseNameGo fuel full budget hops (printName nm ++ rest) =
       some (nm, rest, budget - wireLen nm) := by
   induction nm generalizing budget fuel rest with
   | nil =>
@@ -161,7 +161,7 @@ theorem parseNameGo_printName (nm : Name) (full : List UInt8)
       have : (printName ([] : Name)).length = 1 := rfl
       omega⟩
     have hw1 : 1 ≤ budget := hw
-    show parseNameGo (f + 1) full budget ((0 : UInt8) :: rest) =
+    show parseNameGo (f + 1) full budget hops ((0 : UInt8) :: rest) =
       some ([], rest, budget - 1)
     rw [parseNameGo_step, if_pos rfl, if_pos hw1]
   | cons l ls ih =>
@@ -218,7 +218,7 @@ theorem parseNameIn_printName (full : List UInt8) (nm : Name)
     parseNameIn full (printName nm ++ rest) =
       some (nm, rest, 255 - wireLen nm) := by
   unfold parseNameIn
-  apply parseNameGo_printName nm full 255 (full.length + 257) rest hl hw
+  apply parseNameGo_printName nm full 255 maxHops 256 rest hl hw
   have hlen : (printName nm).length = wireLen nm := printName_length nm
   omega
 
@@ -226,7 +226,7 @@ theorem parseNameIn_printName (full : List UInt8) (nm : Name)
     rewriting. -/
 theorem parseNameIn_step (full bs : List UInt8) :
     parseNameIn full bs =
-      parseNameGo (full.length + 257) full 255 bs := rfl
+      parseNameGo 256 full 255 maxHops bs := rfl
 
 /-- One step of the question reader, stated for rewriting. -/
 theorem parseQuestionIn_step (full bs : List UInt8) :

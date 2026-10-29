@@ -85,26 +85,32 @@ from the rules together:
 - The bytes at the offset are read by these same rules, so a
   pointer may aim at a label, at the zero byte of the root,
   or at another pointer.
+- One name follows at most 16 pointers. A 17th turns the
+  message away. dnspython uses the same limit (Go's
+  `x/net/dns/dnsmessage` uses 10). The limit ends every
+  cycle by the 17th pointer at the latest, the label cycle
+  above included: a cycle through a four byte label is
+  turned away at its 17th pointer, after 16 passes. It also
+  bounds the work one name costs. Finding a pointer's
+  position and its target walks the message, so each jump
+  costs time linear in the message length, and one name
+  costs at most 17 such walks however its pointers chain.
 - The expanded name, counted as if it were written in full
   (one length byte per label, the label bytes, and the final
   zero), stays within 255 bytes. Labels read after a jump
-  count toward the same budget as labels read before it.
-  This budget is what turns away the label cycle described
-  above: each pass through a label spends its length byte
-  and its bytes from the budget, so after finitely many
-  passes the budget is spent and the reading is turned away.
-  For a four byte label the spend is 5 bytes a pass, so the
-  255 byte budget runs out after 51 passes, well before the
-  step budget below.
-- A step budget, the message length plus 257, also falls at
-  every item read. It is a second bound: a reading that
-  keeps spending steps without finishing, including a cycle
-  whose steps add little or nothing to the expanded name,
-  spends it and is turned away.
+  count toward the same budget as labels read before it. A
+  cycle through long labels spends the budget before the
+  pointer limit: through a 63 byte label each pass spends 64
+  bytes, so the fourth pass is turned away after 3 pointers.
+- A step bound of 256 also falls at every item read. No
+  reading reaches it: each label spends at least 2 bytes of
+  the budget, so a reading takes at most 127 label steps, 16
+  pointer steps and 1 final step, 144 in all. It is there so
+  that the Lean definition recurses on a number that falls.
 
 So a pointer walk always ends, with a name or with a
 rejection: the backwards rule limits where a pointer may
-aim, and the 255 byte budget and the step budget between
+aim, and the pointer limit and the 255 byte budget between
 them end every walk that does not finish.
 
 ## Questions
@@ -217,4 +223,6 @@ more inputs.
 | A reserved length form in a record name is refused | `Spec.rejects_reserved_in_record` |
 | A record data length that runs past the end of the message is refused | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused | `Spec.rejects_chain_over_255` |
-| A pointer cycle that passes through a label is refused: the 255 byte budget turns it away | `Spec.rejects_pointer_cycle_through_label` |
+| A pointer cycle that passes through a label is refused: the 16 pointer limit turns it away | `Spec.rejects_pointer_cycle_through_label` |
+| A name that follows 16 pointers, the limit, is read | `Spec.accepts_sixteen_hops` |
+| A name that follows 17 pointers is refused | `Spec.rejects_seventeen_hops` |

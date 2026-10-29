@@ -26,24 +26,28 @@
   - The target lies inside the message, because it is less than
     that pointer position.
   - The bytes at the target are read by the same name rules.
+  - One name may follow at most 16 pointers (`hops`); the
+    17th is rejected. This is the limit dnspython uses. It
+    ends every cycle, the label cycle above included, by the
+    17th pointer, and it bounds the work one name can cost:
+    each jump walks the byte list to find the pointer's
+    position and the target, so a name costs at most 17 walks
+    of the message.
   - The remaining expanded-name budget travels through a jump.
     Labels read at the target count toward the same 255 byte
-    expanded wire limit as labels read before the jump. This
-    budget is what turns away the label cycle above: each
-    pass through a label spends its length byte and its bytes
-    from the budget, so after finitely many passes the budget
-    is spent and the reading is rejected. For a four byte
-    label the spend is 5 bytes a pass, so the budget runs out
-    after 51 passes, well before the fuel below.
+    expanded wire limit as labels read before the jump. A
+    cycle through long labels spends it before the hop limit
+    is reached: through a 63 byte label each pass spends 64
+    bytes, so the fourth pass is turned away after 3 jumps.
+    A cycle through a four byte label spends 5 bytes a pass
+    and reaches the hop limit first, after 16 passes.
   - A fuel count also falls at every label, zero, or pointer
-    step. The fuel starts at the message length plus 257. A
-    successful walk through a deterministic byte graph cannot
-    repeat a starting position without looping forever, so it
-    has at most one step per byte position, plus room for one
-    step per possible byte of an expanded name. Fuel is a
-    second bound: it ends any walk that keeps spending steps
-    without finishing, including a cycle whose steps add
-    little or nothing to the expanded name.
+    step. It starts at 256 and no reading reaches it: each
+    label step spends at least 2 bytes of the budget, so a
+    reading takes at most 127 label steps, 16 pointer steps,
+    and 1 final step, 144 in all. Fuel is there so that the
+    definition recurses on a number that falls; it is not
+    what ends any reading.
 
   A record holds its data as opaque bytes. The parser does not
   look inside record data, including when record data happens
@@ -73,27 +77,28 @@ def takeBytes (n : Nat) (bs : List UInt8) : Option (List UInt8 × List UInt8) :=
 
 /-- Read a name at the front of `rest`, a suffix of `full`.
 
-    `fuel` bounds the steps, and `budget` is the expanded wire
+    `fuel` bounds the steps, `budget` is the expanded wire
     length the name may still take, counting each label length
-    byte, the label bytes, and the final zero. Returns the
-    expanded name, the suffix after the name at the place it was
-    read, and the remaining budget.
+    byte, the label bytes, and the final zero, and `hops` is
+    the number of pointers the name may still follow. Returns
+    the expanded name, the suffix after the name at the place
+    it was read, and the remaining budget.
 
     A pointer ends the name at the place it is read. Its target
     is read for labels and budget only; reading does not resume
     after the target name. -/
-def parseNameGo : Nat → List UInt8 → Nat → List UInt8 →
+def parseNameGo : Nat → List UInt8 → Nat → Nat → List UInt8 →
     Option (Name × List UInt8 × Nat)
-  | 0, _, _, _ => none
-  | _ + 1, _, _, [] => none
-  | fuel + 1, full, budget, b :: rest =>
+  | 0, _, _, _, _ => none
+  | _ + 1, _, _, _, [] => none
+  | fuel + 1, full, budget, hops, b :: rest =>
     if b = 0 then
       if 1 ≤ budget then some ([], rest, budget - 1) else none
     else if b.toNat ≤ 63 then
       if b.toNat + 1 ≤ budget then
         let label := rest.take b.toNat
         if label.length = b.toNat then
-          match parseNameGo fuel full (budget - (b.toNat + 1))
+          match parseNameGo fuel full (budget - (b.toNat + 1)) hops
               (rest.drop b.toNat) with
           | some (ls, rest', remaining) => some (label :: ls, rest', remaining)
           | none => none
@@ -105,18 +110,23 @@ def parseNameGo : Nat → List UInt8 → Nat → List UInt8 →
       | c :: after =>
         let pointerPosition := full.length - (b :: c :: after).length
         let target := (b.toNat - 192) * 256 + c.toNat
-        if target < pointerPosition ∧ target < full.length then
-          match parseNameGo fuel full budget (full.drop target) with
+        if 0 < hops ∧ target < pointerPosition ∧ target < full.length then
+          match parseNameGo fuel full budget (hops - 1) (full.drop target) with
           | some (ls, _, remaining) => some (ls, after, remaining)
           | none => none
         else none
     else none
 
+/-- The most pointers one name may follow. dnspython uses the
+    same limit. -/
+def maxHops : Nat := 16
+
 /-- Read a name in a whole message, with the full 255 byte
-    expanded budget and the standard fuel. -/
+    expanded budget, at most `maxHops` pointers, and fuel of
+    256 steps, which no reading reaches. -/
 def parseNameIn (full rest : List UInt8) :
     Option (Name × List UInt8 × Nat) :=
-  parseNameGo (full.length + 257) full 255 rest
+  parseNameGo 256 full 255 maxHops rest
 
 /-- Read a name when the bytes supplied are the whole message.
     This keeps the first slice's top level name entry point. -/

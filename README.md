@@ -71,7 +71,9 @@ where they end in `sorry`) and proved in
 | A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Spec.rejects_reserved_in_record` |
 | A record whose data length runs past the end of the message is refused. | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused. | `Spec.rejects_chain_over_255` |
-| A pointer cycle that passes through a label is refused: the 255 byte budget turns it away. | `Spec.rejects_pointer_cycle_through_label` |
+| A pointer cycle that passes through a label is refused: the 16 pointer limit turns it away. | `Spec.rejects_pointer_cycle_through_label` |
+| A name that follows 16 pointers, the limit, is read. | `Spec.accepts_sixteen_hops` |
+| A name that follows 17 pointers is refused. | `Spec.rejects_seventeen_hops` |
 
 A message is well formed when its header fields fit their
 widths (the identifier in two bytes, QR, AA, TC, RD, RA, AD,
@@ -130,7 +132,10 @@ are about.
   splitting lines, the decimal parser, the summary text.
   The tests cover them, malformed requests included.
 - Speed. The code works on lists of bytes, which suits
-  proofs, not large data.
+  proofs, not large data. Each pointer jump walks the
+  message, and one name follows at most 16 pointers, so a
+  name costs at most 17 walks of the message; no theorem
+  states a cost.
 
 ## What you must trust
 

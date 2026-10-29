@@ -187,8 +187,35 @@ theorem Spec.rejects_chain_over_255 :
     stands at offset 10, and the question name at offset
     12 is that same pointer. Reading walks label,
     pointer, label, pointer; the backwards rule alone
-    does not stop it, and the 255 byte budget turns it
-    away. -/
+    does not stop it. The 16 pointer limit turns it away
+    at the 17th pointer, after 16 passes that spent 80 of
+    the 255 budget bytes. -/
 theorem Spec.rejects_pointer_cycle_through_label :
     (parse ([0, 0, 0, 0, 0, 4, 97, 98, 99, 100, 192, 5,
       192, 5, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A name that follows 16 pointers, the limit, is read. The
+    question name is the label a at offset 12. The first
+    answer's name points at it, and its data holds 15
+    pointers, each to the one before and the first to
+    offset 12. The second answer's name points at the last
+    of them, so reading it follows 16 pointers. -/
+theorem Spec.accepts_sixteen_hops :
+    (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 0, 16, 0,
+      1, 0, 0, 0, 0, 0, 30, 192, 12, 192, 31, 192,
+      33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
+      45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
+      57, 192, 59, 0, 16, 0, 1, 0, 0, 0, 0, 0,
+      0] : List UInt8)).isSome = true := sorry
+
+/-- A name that follows 17 pointers is refused: the same
+    shape as above with one more pointer in the chain. -/
+theorem Spec.rejects_seventeen_hops :
+    (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 0, 16, 0,
+      1, 0, 0, 0, 0, 0, 32, 192, 12, 192, 31, 192,
+      33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
+      45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
+      57, 192, 59, 192, 61, 0, 16, 0, 1, 0, 0, 0,
+      0, 0, 0] : List UInt8)).isSome = false := sorry
