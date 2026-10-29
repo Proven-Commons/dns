@@ -47,8 +47,17 @@ Slice 2 sections:
 5. Random whole messages (mixed sections), printed and read
    back, and the same messages run through a harness
    compressor that replaces repeated name suffixes with
-   pointers: the compressed bytes must read to the same
-   message.
+   pointers (every second message may also point at an
+   earlier root zero byte): the compressed bytes must read to
+   the same message. Names are drawn from a small alphabet
+   with shared tails, so most messages share suffixes; the
+   results file counts the compressed messages that hold a
+   pointer, and the inputs whose reading follows one.
+
+6. Mutations of the compressed messages at each pointer:
+   retargeted at itself, two bytes on, a random earlier and a
+   random later offset, and past the end; cut short inside
+   the pointer; and turned into each reserved form.
 
 When the Python dnspython module is present, accepted fixed
 messages are also read with it and compared. When it is
@@ -286,11 +295,13 @@ def summary(model):
 MAX_HOPS = 16
 
 
-def read_name(data, pos):
+def read_name(data, pos, stats=None):
     """Read a name at pos by the plan rules. Returns
     (labels, position after the name at the place it was read),
     or None. At most MAX_HOPS pointers are followed. The step
-    cap mirrors the Lean fuel, which no reading reaches."""
+    cap mirrors the Lean fuel, which no reading reaches. When
+    `stats` is a dict, each pointer followed adds one to
+    stats["hops"]."""
     labels = []
     budget = 255
     hops = 0
@@ -329,6 +340,8 @@ def read_name(data, pos):
             hops += 1
             if hops > MAX_HOPS:
                 return None
+            if stats is not None:
+                stats["hops"] = stats.get("hops", 0) + 1
             if nextpos is None:
                 nextpos = cur + 2
             cur = target
@@ -336,9 +349,10 @@ def read_name(data, pos):
         return None
 
 
-def oracle_parse(data):
+def oracle_parse(data, stats=None):
     """The strict reading of the plan rules, as a parse into a
-    model, or None when the message is rejected."""
+    model, or None when the message is rejected. `stats` is
+    passed to read_name."""
     if len(data) < 12:
         return None
     mid = data[0] * 256 + data[1]
@@ -364,7 +378,7 @@ def oracle_parse(data):
     pos = 12
     questions = []
     for _ in range(qd):
-        got = read_name(data, pos)
+        got = read_name(data, pos, stats)
         if got is None:
             return None
         labels, pos = got
@@ -377,7 +391,7 @@ def oracle_parse(data):
         pos += 4
 
     def read_record(pos):
-        got = read_name(data, pos)
+        got = read_name(data, pos, stats)
         if got is None:
             return None
         labels, pos = got
@@ -436,9 +450,13 @@ class Tally:
         self.inputs = 0
         self.agreements = 0
         self.failures = []
+        # The message bytes behind each input, for the pointer
+        # counts in the results file.
+        self.datas = []
 
     def check(self, data, answer, label, op="parse"):
         self.inputs += 1
+        self.datas.append(data)
         want = expected_parse(data) if op == "parse" else expected_sections(data)
         if answer == want:
             self.agreements += 1
@@ -792,6 +810,7 @@ def run_full_fixed(op):
     tally.failures += problems
     for (label, data, model), answer in zip(cases, answers):
         tally.inputs += 1
+        tally.datas.append(data)
         want = (
             "ok:" + codes(model_bytes(model))
             if op == "parse"
@@ -923,11 +942,12 @@ def run_rejections():
         lines.append(request("sections", data))
     answers, problems = ask_all(lines)
     tally.failures += problems
-    for (label, _), p_ans, s_ans in zip(
+    for (label, data), p_ans, s_ans in zip(
         cases, answers[0::2], answers[1::2]
     ):
         for op, answer in (("parse", p_ans), ("sections", s_ans)):
             tally.inputs += 1
+            tally.datas.append(data)
             if answer == "none":
                 tally.agreements += 1
             else:
@@ -937,17 +957,33 @@ def run_rejections():
     return tally
 
 
+# Labels for the whole message generator. Names are drawn from a
+# small alphabet and end in one of a few shared tails, so that
+# names in one message share suffixes and the compressor below
+# has pointers to write. One label in seven is random bytes
+# instead, and one pool label is 63 bytes long.
+LABEL_POOL = [b"a", b"b", b"c", b"ns", b"www", b"mail", b"example",
+              b"com", b"org", b"x" * 63]
+TAILS = [[], [b"com"], [b"example", b"com"], [b"org"],
+         [b"example", b"org"], [b"b", b"c"]]
+
+
+def wire_len(labels):
+    return sum(len(lab) + 1 for lab in labels) + 1
+
+
 def random_model(rng):
-    def name():
-        labels = []
-        used = 1
-        for _ in range(rng.randint(0, 4)):
+    def label():
+        if rng.randrange(7) == 0:
             n = rng.randint(1, 24)
-            lab = bytes(rng.randrange(256) for _ in range(n))
-            if used + n + 1 > 255:
-                break
-            labels.append(lab)
-            used += n + 1
+            return bytes(rng.randrange(256) for _ in range(n))
+        return rng.choice(LABEL_POOL)
+
+    def name():
+        labels = [label() for _ in range(rng.randint(0, 2))]
+        labels += rng.choice(TAILS)
+        while wire_len(labels) > 255:
+            labels.pop(0)
         return labels
 
     def record():
@@ -977,8 +1013,8 @@ def random_model(rng):
             (name(), rng.randint(0, 65535), rng.randint(0, 65535))
             for _ in range(rng.randint(0, 2))
         ],
-        "answers": [record() for _ in range(rng.randint(0, 2))],
-        "authorities": [record() for _ in range(rng.randint(0, 1))],
+        "answers": [record() for _ in range(rng.randint(0, 3))],
+        "authorities": [record() for _ in range(rng.randint(0, 2))],
         "additionals": [record() for _ in range(rng.randint(0, 2))],
     }
 
@@ -992,6 +1028,7 @@ def run_random_full(seed, count, op):
     tally.failures += problems
     for i, (model, data, answer) in enumerate(zip(models, docs, answers)):
         tally.inputs += 1
+        tally.datas.append(data)
         want = (
             "ok:" + codes(data)
             if op == "parse"
@@ -1006,34 +1043,42 @@ def run_random_full(seed, count, op):
     return tally, models
 
 
-def compress_message(model):
-    """Write a model with name compression. A dictionary maps
-    each name suffix already written to the offset where its
-    first label length byte sits. Each new name writes the
-    labels before its longest known suffix, then a pointer to
-    that suffix, or a zero byte when no suffix is known."""
+def compress_message(model, point_root=False):
+    """Write a model with name compression. Returns the bytes
+    and the offsets of the pointers written.
+
+    A dictionary maps each name suffix already written to the
+    offset where it starts. Each new name writes the labels
+    before its longest known suffix, then a pointer to that
+    suffix, or a zero byte when no suffix is known. The root
+    suffix counts as known only when `point_root` is set: then
+    a name may end in a pointer to an earlier zero byte, and a
+    root name may be that pointer alone."""
     out = bytearray(model_header(model))
     known = {}
+    pointers = []
 
     def write_name(labels):
-        split = len(labels)
+        split = None
         for i in range(len(labels) + 1):
-            if tuple(labels[i:]) in known:
+            suffix = tuple(labels[i:])
+            if suffix in known and (suffix or point_root):
                 split = i
                 break
-        for j in range(split):
+        stop = len(labels) if split is None else split
+        for j in range(stop):
             suffix = tuple(labels[j:])
             if suffix not in known:
                 known[suffix] = len(out)
             out.append(len(labels[j]))
             out.extend(labels[j])
-        if split < len(labels):
-            target = known[tuple(labels[split:])]
-            out.extend(pointer(target))
-        else:
+        if split is None:
             if tuple() not in known:
                 known[tuple()] = len(out)
             out.append(0)
+        else:
+            pointers.append(len(out))
+            out.extend(pointer(known[tuple(labels[split:])]))
 
     for labels, qt, qc in model["questions"]:
         write_name(labels)
@@ -1042,7 +1087,7 @@ def compress_message(model):
         for labels, rt, rc, ttl, data in model[section]:
             write_name(labels)
             out += be16(rt) + be16(rc) + be32(ttl) + be16(len(data)) + bytes(data)
-    return bytes(out)
+    return bytes(out), pointers
 
 
 def suffix_models():
@@ -1065,13 +1110,20 @@ def suffix_models():
     return models
 
 
-def run_compressed(models, op):
+def compressed_docs(models):
+    """The compressed form of each model: every second one may
+    point at the root. Returns (bytes, pointer offsets) pairs."""
+    return [compress_message(m, point_root=(i % 2 == 1))
+            for i, m in enumerate(models)]
+
+
+def run_compressed(models, docs, op):
     tally = Tally()
-    docs = [compress_message(m) for m in models]
-    answers, problems = ask_all([request(op, d) for d in docs])
+    answers, problems = ask_all([request(op, d) for d, _ in docs])
     tally.failures += problems
-    for i, (model, data, answer) in enumerate(zip(models, docs, answers)):
+    for i, (model, (data, _), answer) in enumerate(zip(models, docs, answers)):
         tally.inputs += 1
+        tally.datas.append(data)
         want = (
             "ok:" + codes(model_bytes(model))
             if op == "parse"
@@ -1084,6 +1136,55 @@ def run_compressed(models, op):
                 f"compressed {i} {op}: want {want[:100]}, got {str(answer)[:100]}"
             )
     return tally
+
+
+def pointer_mutations(docs, rng):
+    """Mutations of the compressed messages at their pointers.
+    For each pointer: retarget it at itself, two bytes on, a
+    random earlier offset (which can land in the header, inside
+    a label, or on another pointer), a random later offset, and
+    past the end of the message (0x3FFF); cut the message short
+    inside it; and turn its first byte into each reserved form
+    (top bits 01 and 10). Returns (label, bytes) pairs."""
+    out = []
+    for n, (data, pointers) in enumerate(docs):
+        for p in pointers:
+            def retarget(t, kind):
+                m = bytearray(data)
+                m[p] = 0xC0 | (t >> 8)
+                m[p + 1] = t & 0xFF
+                out.append((f"compressed {n} pointer at {p} {kind}", bytes(m)))
+
+            retarget(p, "to itself")
+            retarget(p + 2, "two bytes on")
+            retarget(rng.randrange(0, p), "back to a random offset")
+            if p + 2 < len(data):
+                retarget(rng.randrange(p + 2, len(data)), "on to a random offset")
+            retarget(0x3FFF, "past the end")
+            out.append((f"compressed {n} cut inside the pointer at {p}", data[: p + 1]))
+            for form in (0x40, 0x80):
+                m = bytearray(data)
+                m[p] = form | (data[p] & 0x3F)
+                out.append((f"compressed {n} pointer at {p} as form {form:#04x}", bytes(m)))
+    return out
+
+
+def run_pointer_mutations(docs, seed):
+    tally = Tally()
+    cases = pointer_mutations(docs, random.Random(seed + 2))
+    answers, problems = ask_all([request("parse", d) for _, d in cases])
+    tally.failures += problems
+    for (label, data), answer in zip(cases, answers):
+        tally.check(data, answer, f"mutation {label}")
+    return tally
+
+
+def follows_pointer(data):
+    """Whether the strict reading of `data` follows at least one
+    pointer, whether the message is then accepted or not."""
+    stats = {}
+    oracle_parse(data, stats)
+    return stats.get("hops", 0) > 0
 
 
 def dnspython_crosschecks():
@@ -1183,8 +1284,10 @@ def main():
     rfp, models = run_random_full(args.seed, 300, "parse")
     rfs, _ = run_random_full(args.seed, 300, "sections")
     comp_models = models + suffix_models()
-    comp_p = run_compressed(comp_models, "parse")
-    comp_s = run_compressed(comp_models, "sections")
+    comp_docs = compressed_docs(comp_models)
+    comp_p = run_compressed(comp_models, comp_docs, "parse")
+    comp_s = run_compressed(comp_models, comp_docs, "sections")
+    comp_mut = run_pointer_mutations(comp_docs, args.seed)
     malf = run_malformed()
     dp_checks, dp_failures = dnspython_crosschecks()
 
@@ -1199,6 +1302,7 @@ def main():
         ("Random whole messages, sections", rfs),
         ("Compressed random and suffix messages, parse", comp_p),
         ("Compressed random and suffix messages, sections", comp_s),
+        ("Mutations of the compressed messages at their pointers, parse", comp_mut),
     ]
     failures = []
     for _, t in tallies:
@@ -1206,6 +1310,9 @@ def main():
     failures += malf.failures + dp_failures
     total_in = sum(t.inputs for _, t in tallies)
     total_agree = sum(t.agreements for _, t in tallies)
+    with_pointer = sum(follows_pointer(d) for _, t in tallies for d in t.datas)
+    comp_with_pointer = sum(1 for _, ptrs in comp_docs if ptrs)
+    comp_pointers = sum(len(ptrs) for _, ptrs in comp_docs)
 
     lean_ver = subprocess.run(
         ["lake", "env", "lean", "--version"],
@@ -1229,6 +1336,10 @@ def main():
         f"- Malformed requests answered error: {malf.agreements} of {malf.inputs}",
         f"- dnspython cross checks: {dp_checks} run, {len(dp_failures)} failures"
         if DNSPYTHON else "- dnspython cross checks: 0 run (module absent)",
+        f"- Compressed messages holding a pointer: {comp_with_pointer} of"
+        f" {len(comp_docs)}, {comp_pointers} pointers in all",
+        f"- Differential inputs whose reading follows a pointer: {with_pointer}"
+        f" of {total_in}",
         f"- Differential inputs: {total_in}",
         f"- Differential agreements: {total_agree}",
         "- Named differences: none",

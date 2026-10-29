@@ -45,7 +45,8 @@ the parser turns away, such as the single code `0`, answers
 `python3 tests/run_tests.py` rebuilds the tool, runs the
 fixed cases, the differential run against the harness
 oracle, the mutation and whole message runs, the
-compression runs, and the rejection and malformed cases,
+compression runs and the mutations at each pointer, and the
+rejection and malformed cases,
 runs a cross check against the Python dnspython module
 when it is present, and writes the outcome to
 `tests/TEST-RESULTS.md`.
@@ -189,8 +190,9 @@ are about.
    shipped with Lean.
 2. `python3 tests/run_tests.py`: the fixed cases, the
    differential against the harness oracle, the mutation
-   and whole message runs, the compression runs, and the
-   rejection and malformed cases, with counts and any
+   and whole message runs, the compression runs and the
+   mutations at each pointer, and the rejection and
+   malformed cases, with counts and any
    failures written to `tests/TEST-RESULTS.md`. The
    harness also reads the accepted fixed messages with
    dnspython when the module is present, and says so in

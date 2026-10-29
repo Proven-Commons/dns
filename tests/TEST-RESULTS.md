@@ -16,9 +16,12 @@ Written by `tests/run_tests.py`. Rerun it to check these numbers.
 - Random whole messages, sections: 300 of 300 agreements
 - Compressed random and suffix messages, parse: 302 of 302 agreements
 - Compressed random and suffix messages, sections: 302 of 302 agreements
+- Mutations of the compressed messages at their pointers, parse: 6464 of 6464 agreements
 - Malformed requests answered error: 17 of 17
 - dnspython cross checks: 0 run (module absent)
-- Differential inputs: 1730
-- Differential agreements: 1730
+- Compressed messages holding a pointer: 259 of 302, 808 pointers in all
+- Differential inputs whose reading follows a pointer: 5194 of 8194
+- Differential inputs: 8194
+- Differential agreements: 8194
 - Named differences: none
 - Failures: 0
