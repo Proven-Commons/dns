@@ -119,14 +119,33 @@ theorem Spec.rejects_pointer_past_end :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       195, 255, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
 
-/-- A pointer into the middle of a label is refused. The
-    second name points at offset 14, the second byte of
-    the label abc in the first name, and the byte there,
-    98, stands in the reserved range for a length byte. -/
-theorem Spec.rejects_pointer_mid_label :
+/-- A pointer whose target byte is a reserved length form
+    is refused. The second name points at offset 14, the
+    second byte of the label abc in the first name. The
+    byte there, 98 (0x62), has exactly one of its top two
+    bits set, so it is the reserved form, and reading at
+    the target refuses it. Landing inside a label is not
+    itself refused: see `Spec.reads_pointer_mid_label`. -/
+theorem Spec.rejects_pointer_onto_reserved_form :
     (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       3, 97, 98, 99, 0, 0, 1, 0, 1, 192, 14, 0,
       1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A pointer into the middle of a label is read like any
+    other target: no rule forbids it, and dnspython and Go's
+    `dnsmessage` read it too. The first name, at offset 12,
+    is the one label of the bytes 97, 1, 120. The second
+    name is a pointer to offset 14, inside that label,
+    where the bytes 1, 120, 0 read as the name x. -/
+theorem Spec.reads_pointer_mid_label :
+    parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      3, 97, 1, 120, 0, 0, 1, 0, 1, 192, 14, 0,
+      1, 0, 1] : List UInt8) =
+      some { header := { id := 7, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[97, 1, 120]], qtype := 1, qclass := 1 },
+                           { name := [[120]], qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := sorry
 
 /-- A reserved length form in a record name is refused.
     The answer record's name starts with the byte 64,

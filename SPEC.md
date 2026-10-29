@@ -84,7 +84,10 @@ from the rules together:
   rule above, and is checked as well.
 - The bytes at the offset are read by these same rules, so a
   pointer may aim at a label, at the zero byte of the root,
-  or at another pointer.
+  or at another pointer. It may also aim inside a label, or
+  inside the name being read: no rule forbids either, and
+  the bytes there are read as a name. When the byte there is
+  a reserved form, the message is turned away for that.
 - One name follows at most 16 pointers. A 17th turns the
   message away. dnspython uses the same limit (Go's
   `x/net/dns/dnsmessage` uses 10). The limit ends every
@@ -219,7 +222,8 @@ more inputs.
 | A pointer that aims at its own position is refused | `Spec.rejects_pointer_self` |
 | A pointer that aims forward is refused, on an input no other rule refuses (the first question's name points at the second's) | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused | `Spec.rejects_pointer_past_end` |
-| A pointer into the middle of a label is refused | `Spec.rejects_pointer_mid_label` |
+| A pointer whose target byte is a reserved length form is refused (here a byte inside a label) | `Spec.rejects_pointer_onto_reserved_form` |
+| A pointer into the middle of a label is read like any other target when the bytes there read as a name | `Spec.reads_pointer_mid_label` |
 | A reserved length form in a record name is refused | `Spec.rejects_reserved_in_record` |
 | A record data length that runs past the end of the message is refused | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused | `Spec.rejects_chain_over_255` |

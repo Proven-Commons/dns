@@ -74,10 +74,21 @@ theorem Spec.rejects_pointer_past_end :
   decide +kernel
 
 
-theorem Spec.rejects_pointer_mid_label :
+theorem Spec.rejects_pointer_onto_reserved_form :
     (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       3, 97, 98, 99, 0, 0, 1, 0, 1, 192, 14, 0,
       1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+theorem Spec.reads_pointer_mid_label :
+    parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      3, 97, 1, 120, 0, 0, 1, 0, 1, 192, 14, 0,
+      1, 0, 1] : List UInt8) =
+      some { header := { id := 7, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[97, 1, 120]], qtype := 1, qclass := 1 },
+                           { name := [[120]], qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := by
   decide +kernel
 
 

@@ -67,7 +67,8 @@ where they end in `sorry`) and proved in
 | A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
 | A pointer that aims forward, at a name later in the message, is refused, on an input where no other rule refuses it: the first question's name points at the second's. | `Spec.rejects_pointer_forward` |
 | A pointer whose target lies past the end of the message is refused. | `Spec.rejects_pointer_past_end` |
-| A pointer into the middle of a label is refused: the byte it lands on stands in the reserved range for a length byte. | `Spec.rejects_pointer_mid_label` |
+| A pointer whose target byte is a reserved length form is refused: here it lands inside a label, on the byte 0x62. | `Spec.rejects_pointer_onto_reserved_form` |
+| A pointer into the middle of a label is read like any other target when the bytes there read as a name: here the second name reads as x. | `Spec.reads_pointer_mid_label` |
 | A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Spec.rejects_reserved_in_record` |
 | A record whose data length runs past the end of the message is refused. | `Spec.rejects_data_past_end` |
 | An expanded name over 255 bytes, reached by chaining pointers, is refused. | `Spec.rejects_chain_over_255` |

@@ -734,6 +734,28 @@ def full_fixed_cases():
     )
     cases.append(("pointer-chain", wire, model))
 
+    # A pointer into the middle of a label, landing on bytes
+    # that read as a name: no rule forbids it. The first name
+    # is the one label 61 01 78; the second is a pointer to
+    # offset 14, where 01 78 00 reads as the name x.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2)
+    wire += question_bytes([b"a\x01x"], 1, 1) + pointer(14) + be16(1) + be16(1)
+    assert wire.hex() == "000701000002000000000000036101780000010001c00e00010001"
+    model = qmodel(7, QUERY, [([b"a\x01x"], 1, 1), ([b"x"], 1, 1)])
+    cases.append(("pointer-mid-label", wire, model))
+
+    # A pointer into the name being read: the name at offset
+    # 12 is the label 01 78 00 and then a pointer to offset 13,
+    # inside that label, where 01 78 00 reads as x. The target
+    # is before the pointer, so it is read: the name is the two
+    # labels 01 78 00 and x. dnspython refuses it, since it asks
+    # each target to lie before the start of the name being
+    # read; the results file names that difference.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1)
+    wire += bytes([3, 1, 0x78, 0]) + pointer(13) + be16(1) + be16(1)
+    model = qmodel(7, QUERY, [([b"\x01x\x00", b"x"], 1, 1)])
+    cases.append(("pointer-into-own-name", wire, model))
+
     # A name that follows exactly 16 pointers, the limit: read.
     model = qmodel(7, (1, 0, 0, 0, 0, 0, 0, 0, 0), [([b"a"], 1, 1)])
     chain = hop_chain(16)
@@ -807,13 +829,17 @@ def rejection_cases():
     wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + pointer(1023) + be16(1) + be16(1)
     cases.append(("pointer-past-end", wire))
 
-    # A pointer into the middle of a label: the second name
+    # A pointer onto a reserved length form: the second name
     # points at offset 14, the second byte of the label abc in
-    # the first name, which begins at offset 12.
+    # the first name, which begins at offset 12. The byte
+    # there, b (0x62), has one top bit set, the reserved form,
+    # so reading at the target refuses it. Landing inside a
+    # label is not refused in itself: see the accepted case
+    # pointer-mid-label.
     wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2)
     wire += question_bytes([b"abc"], 1, 1)
     wire += pointer(14) + be16(1) + be16(1)
-    cases.append(("pointer-mid-label", wire))
+    cases.append(("pointer-onto-reserved-form", wire))
 
     # A reserved length form (one top bit set) in a record
     # name.
