@@ -1,0 +1,352 @@
+/-
+  The specification as Lean statements: the challenge file.
+
+  A reviewer who did not write this file approves it, and
+  `bar.toml` records the SHA-256 it had then. The proofs live
+  in `Dns.Proofs` (`Dns/Proofs/SpecProofs.lean`); `lake comparator`
+  checks that each one proves exactly the statement written
+  here. The `sorry` below is expected in this file only.
+
+  The statements use the definitions in `Dns/Value.lean` and
+  `Dns/Parse.lean`, the code under proof named in `bar.toml`,
+  and well formedness (`Dns.Spec.WF` and the predicates it uses),
+  which is in `Dns/Spec/Defs.lean`. That file is part of the
+  specification too.
+-/
+
+import Dns
+import Dns.Spec.Defs
+
+open Dns Dns.Spec
+
+/-! ## The round trips
+
+The statements the slice stands on. Each one is the statement
+of the proved theorem of the same shape in
+`Dns/Proofs/RoundTrip.lean`, over the same well formedness
+predicate, `Dns.Spec.WF`. -/
+
+/-- Parsing the printed form of a well formed message gives
+    the message back, all four sections. The printed form
+    holds no compression, so this statement is about the
+    uncompressed printing. -/
+theorem Dns.Spec.parse_print {m : Message} (hw : WF m) :
+    parse (print m) = some m := sorry
+
+/-- The question only case of the same claim, the first
+    slice's result: a message with a well formed header and
+    well formed questions, and the other three sections
+    empty, parses back from its printed form. -/
+theorem Dns.Spec.parse_print_question_only {h : Header}
+    {qs : List Question} (hh : WFHeader h)
+    (hq : ∀ q ∈ qs, WFQuestion q)
+    (hlen : qs.length < 65536) :
+    parse (print ⟨h, qs, [], [], []⟩) =
+      some ⟨h, qs, [], [], []⟩ := sorry
+
+/-! ## The header
+
+How the twelve header bytes are read, for every input. The
+round trips above hold for any pair of reader and printer that
+agree with each other, so they do not pin which bit is which:
+a parser and a printer that both swapped two flags would still
+pass them. These statements pin the layout, against RFC 1035
+section 4.1.1 and the layout of the fourth byte in RFC 6895
+section 2. -/
+
+/-- Every message `parse` accepts has the header its first
+    twelve bytes give, and as many entries in each section as
+    the count for that section says. The third byte holds QR
+    (0x80), the opcode (0x78), AA (0x04), TC (0x02), and RD
+    (0x01). The fourth holds RA (0x80), Z (0x40), AD (0x20,
+    RFC 4035 section 3.2.3), CD (0x10, RFC 4035 section
+    3.2.2), and the RCODE (0x0F). The identifier and the four
+    counts (questions, answers, authority records, additional
+    records) are big endian byte pairs. Z is not held: a
+    message with Z set is refused (`Dns.Spec.rejects_z_bit`). -/
+theorem Dns.Spec.parse_reads_header
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    {m : Message}
+    (hm : parse (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) = some m) :
+    m.header = { id := i1.toNat * 256 + i2.toNat,
+                 qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+                 aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+                 rd := f1.toNat % 2,
+                 ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+                 cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 } ∧
+    m.questions.length = q1.toNat * 256 + q2.toNat ∧
+    m.answers.length = a1.toNat * 256 + a2.toNat ∧
+    m.authorities.length = n1.toNat * 256 + n2.toNat ∧
+    m.additionals.length = r1.toNat * 256 + r2.toNat := sorry
+
+/-- The same layout for `parseHeader`, the header reader that
+    `parse` calls first, with one thing more: it accepts every
+    twelve header bytes whose Z bit (0x40 of the fourth byte)
+    is clear, whatever bytes follow them. AD and CD are read
+    like any other flag: a header with either set is not
+    turned away for it. The counts are the next four big
+    endian byte pairs. -/
+theorem Dns.Spec.parseHeader_fields
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    (hz : (f2.toNat / 64) % 2 = 0) :
+    parseHeader (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) =
+      some ({ id := i1.toNat * 256 + i2.toNat,
+              qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+              aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+              rd := f1.toNat % 2,
+              ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+              cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 },
+        q1.toNat * 256 + q2.toNat, a1.toNat * 256 + a2.toNat,
+        n1.toNat * 256 + n2.toNat, r1.toNat * 256 + r2.toNat, rest) := sorry
+
+/-- A message whose Z bit (0x40 of the fourth byte) is set is
+    refused, whatever the other bytes hold. Z is the one flag
+    bit RFC 6895 section 2 still reserves. -/
+theorem Dns.Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
+    (hz : (f2.toNat / 64) % 2 = 1) :
+    parse (i1 :: i2 :: f1 :: f2 :: rest) = none := sorry
+
+/-! ## A compressed name, read
+
+The round trips cover printed messages, which hold no
+pointer. This statement reads one, on one input; no theorem
+states that every compressed message reads to its expanded
+form. -/
+
+/-- The example of RFC 1035 section 4.1.4, placed in a
+    message: the first question's name F.ISI.ARPA starts at
+    offset 12, right after the header, and the second
+    question's name is the label FOO and a pointer to offset
+    12. The message parses, with the second name expanded to
+    FOO.F.ISI.ARPA. -/
+theorem Dns.Spec.reads_rfc_4_1_4 :
+    parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,
+      0, 1, 0, 1, 3, 70, 79, 79, 192, 12, 0, 1,
+      0, 1] : List UInt8) =
+      some { header := { id := 4660, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 },
+                           { name := [[70, 79, 79], [70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := sorry
+
+/-! ## Single inputs at the name and record rules
+
+Single inputs, one for each headline rule of `SPEC.md`: most
+are refused, and three are read where a reader might expect a
+refusal (a pointer into a label, and a name at the pointer
+limit, in two shapes). A refusal statement says that its
+input is refused, not which rule refuses it. Each input is one of the named cases in the test
+harness, built there with its own builders, and stands here
+byte for byte the same. The differential tests cover these
+rules on many more inputs; these statements pin them so a
+reader of the specification can check each rule against one
+concrete case. -/
+
+
+/-- A pointer that aims at its own position is refused.
+    The name at offset 12 is a pointer to offset 12, and a
+    target must be strictly earlier than the pointer. -/
+theorem Dns.Spec.rejects_pointer_self :
+    (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+      192, 12, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A pointer that aims forward is refused. The message
+    holds two questions and nothing else. The first
+    question's name at offset 12 is a pointer to offset 18,
+    where the second question's name, the label later,
+    sits. Every byte is counted and every target lies
+    inside the message, so only the rule that a target be
+    strictly earlier than the pointer turns it away: a
+    reader that allowed forward pointers would read both
+    names as later. -/
+theorem Dns.Spec.rejects_pointer_forward :
+    (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      192, 18, 0, 1, 0, 1, 5, 108, 97, 116, 101, 114,
+      0, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A pointer whose target lies past the end of the
+    message is refused. The name at offset 12 points at
+    offset 1023 in a message of 18 bytes. -/
+theorem Dns.Spec.rejects_pointer_past_end :
+    (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+      195, 255, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A pointer whose target byte is a reserved length form
+    is refused. The second name points at offset 14, the
+    second byte of the label abc in the first name. The
+    byte there, 98 (0x62), has exactly one of its top two
+    bits set, so it is the reserved form, and reading at
+    the target refuses it. Landing inside a label is not
+    itself refused: see `Dns.Spec.reads_pointer_mid_label`. -/
+theorem Dns.Spec.rejects_pointer_onto_reserved_form :
+    (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      3, 97, 98, 99, 0, 0, 1, 0, 1, 192, 14, 0,
+      1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A pointer into the middle of a label is read like any
+    other target: no rule forbids it, and dnspython and Go's
+    `dnsmessage` read it too. The first name, at offset 12,
+    is the one label of the bytes 97, 1, 120. The second
+    name is a pointer to offset 14, inside that label,
+    where the bytes 1, 120, 0 read as the name x. -/
+theorem Dns.Spec.reads_pointer_mid_label :
+    parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      3, 97, 1, 120, 0, 0, 1, 0, 1, 192, 14, 0,
+      1, 0, 1] : List UInt8) =
+      some { header := { id := 7, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[97, 1, 120]], qtype := 1, qclass := 1 },
+                           { name := [[120]], qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := sorry
+
+/-- A reserved length form in a record name is refused.
+    The answer record's name starts with the byte 64,
+    which has exactly one of its top two bits set. -/
+theorem Dns.Spec.rejects_reserved_in_record :
+    (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
+      1, 120, 0, 0, 1, 0, 1, 64, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0] : List UInt8)).isSome = false := sorry
+
+/-- A record whose data length runs past the end of the
+    message is refused. The length says 10 bytes of data
+    and 3 stand in the message. -/
+theorem Dns.Spec.rejects_data_past_end :
+    (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
+      1, 120, 0, 0, 1, 0, 1, 1, 121, 0, 0, 1,
+      0, 1, 0, 0, 0, 0, 0, 10, 97, 98, 99] : List UInt8)).isSome = false := sorry
+
+/-- An expanded name over 255 bytes, reached by
+    chaining, is refused. Each name adds one 60 byte
+    label and points at the name before it, and the
+    fifth expansion needs 306 wire bytes, over the 255
+    byte budget. -/
+theorem Dns.Spec.rejects_chain_over_255 :
+    (parse ([0, 7, 1, 0, 0, 5, 0, 0, 0, 0, 0, 0,
+      60, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 0, 0, 1, 0, 1, 60, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 192, 12, 0, 1, 0,
+      1, 60, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 192, 78, 0, 1, 0, 1, 60, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 192, 145, 0,
+      1, 0, 1, 60, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 192, 212, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A cycle that passes through a label is refused. The
+    header bytes double as a name fragment: the label
+    abcd stands at offset 5, a pointer back to offset 5
+    stands at offset 10, and the question name at offset
+    12 is that same pointer. Reading walks label,
+    pointer, label, pointer; the backwards rule alone
+    does not stop it. The statement says only that the
+    message is refused. In this parser the 16 pointer
+    limit refuses it, at the 17th pointer, after 16
+    passes that spent 80 of the 255 budget bytes; a
+    parser without the limit would still refuse it, by
+    the budget, after 51 passes. That the pointer count
+    runs on across labels is pinned on its own input by
+    `Dns.Spec.rejects_seventeen_hops_through_labels`. -/
+theorem Dns.Spec.rejects_pointer_cycle_through_label :
+    (parse ([0, 0, 0, 0, 0, 4, 97, 98, 99, 100, 192, 5,
+      192, 5, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
+
+/-- A name that follows 16 pointers, the limit, is read. The
+    question name is the label a at offset 12. The first
+    answer's name points at it, and its data holds 15
+    pointers, each to the one before and the first to
+    offset 12. The second answer's name points at the last
+    of them, so reading it follows 16 pointers. Both
+    records have type 65280, a private use type (RFC 6895
+    section 3.1), so every reader holds their data opaque. -/
+theorem Dns.Spec.accepts_sixteen_hops :
+    (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
+      1, 0, 0, 0, 0, 0, 30, 192, 12, 192, 31, 192,
+      33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
+      45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
+      57, 192, 59, 255, 0, 0, 1, 0, 0, 0, 0, 0,
+      0] : List UInt8)).isSome = true := sorry
+
+/-- A name that follows 17 pointers is refused: the same
+    shape as above with one more pointer in the chain. -/
+theorem Dns.Spec.rejects_seventeen_hops :
+    (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
+      1, 0, 0, 0, 0, 0, 32, 192, 12, 192, 31, 192,
+      33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
+      45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
+      57, 192, 59, 192, 61, 255, 0, 0, 1, 0, 0, 0,
+      0, 0, 0] : List UInt8)).isSome = false := sorry
+
+/-- A name that follows 16 pointers with a label between each
+    two is read. The message holds 17 questions. The first
+    question's name is the label a, at offset 12. Each later
+    question's name is one label, b, c, and so on to q, and a
+    pointer to the name of the question before. Reading the
+    last name, q.p.o and on down to a, follows 16 pointers,
+    and its expanded form takes 35 of the 255 budget bytes. -/
+theorem Dns.Spec.accepts_sixteen_hops_through_labels :
+    (parse ([0, 7, 1, 0, 0, 17, 0, 0, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
+      1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
+      100, 192, 27, 0, 1, 0, 1, 1, 101, 192, 35, 0,
+      1, 0, 1, 1, 102, 192, 43, 0, 1, 0, 1, 1,
+      103, 192, 51, 0, 1, 0, 1, 1, 104, 192, 59, 0,
+      1, 0, 1, 1, 105, 192, 67, 0, 1, 0, 1, 1,
+      106, 192, 75, 0, 1, 0, 1, 1, 107, 192, 83, 0,
+      1, 0, 1, 1, 108, 192, 91, 0, 1, 0, 1, 1,
+      109, 192, 99, 0, 1, 0, 1, 1, 110, 192, 107, 0,
+      1, 0, 1, 1, 111, 192, 115, 0, 1, 0, 1, 1,
+      112, 192, 123, 0, 1, 0, 1, 1, 113, 192, 131, 0,
+      1, 0, 1] : List UInt8)).isSome = true := sorry
+
+/-- A name that follows 17 pointers with a label between each
+    two is refused: the same shape as above with an 18th
+    question, the label r and a pointer to the 17th. The
+    pointer count runs on across the labels between the
+    pointers; a count that started again at each label would
+    read this name, whose expanded form takes only 37 of the
+    255 budget bytes. -/
+theorem Dns.Spec.rejects_seventeen_hops_through_labels :
+    (parse ([0, 7, 1, 0, 0, 18, 0, 0, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
+      1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
+      100, 192, 27, 0, 1, 0, 1, 1, 101, 192, 35, 0,
+      1, 0, 1, 1, 102, 192, 43, 0, 1, 0, 1, 1,
+      103, 192, 51, 0, 1, 0, 1, 1, 104, 192, 59, 0,
+      1, 0, 1, 1, 105, 192, 67, 0, 1, 0, 1, 1,
+      106, 192, 75, 0, 1, 0, 1, 1, 107, 192, 83, 0,
+      1, 0, 1, 1, 108, 192, 91, 0, 1, 0, 1, 1,
+      109, 192, 99, 0, 1, 0, 1, 1, 110, 192, 107, 0,
+      1, 0, 1, 1, 111, 192, 115, 0, 1, 0, 1, 1,
+      112, 192, 123, 0, 1, 0, 1, 1, 113, 192, 131, 0,
+      1, 0, 1, 1, 114, 192, 139, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
