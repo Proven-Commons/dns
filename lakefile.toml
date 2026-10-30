@@ -1,13 +1,14 @@
 name = "dns"
 version = "0.1.0"
 license = "Apache-2.0"
-defaultTargets = ["Dns", "Proofs", "dns"]
+defaultTargets = ["Dns", "DnsProofs", "dns"]
 
 [[lean_lib]]
 name = "Dns"
 
 [[lean_lib]]
-name = "Proofs"
+name = "DnsProofs"
+roots = ["Dns.Proofs"]
 
 [[lean_exe]]
 name = "dns"
