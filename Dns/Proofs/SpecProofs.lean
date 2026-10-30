@@ -1,24 +1,24 @@
 /-
-  Proofs of the statements in `Spec.lean`, under the same
+  Proofs of the statements in `Dns/Spec.lean`, under the same
   names.
 
   The round trips are the theorems proved in
-  `Proofs/RoundTrip.lean`. The refusals are single inputs,
+  `Dns/Proofs/RoundTrip.lean`. The refusals are single inputs,
   checked in the kernel with `decide +kernel`: no native
   evaluation, which the bar forbids.
 -/
 
 import Dns
-import Spec.Defs
-import Proofs.RoundTrip
+import Dns.Spec.Defs
+import Dns.Proofs.RoundTrip
 
-open Dns Spec
+open Dns Dns.Spec
 
-theorem Spec.parse_print {m : Message} (hw : WF m) :
+theorem Dns.Spec.parse_print {m : Message} (hw : WF m) :
     parse (print m) = some m :=
   Dns.Proofs.parse_print hw
 
-theorem Spec.parse_print_question_only {h : Header}
+theorem Dns.Spec.parse_print_question_only {h : Header}
     {qs : List Question} (hh : WFHeader h)
     (hq : ∀ q ∈ qs, WFQuestion q)
     (hlen : qs.length < 65536) :
@@ -27,7 +27,7 @@ theorem Spec.parse_print_question_only {h : Header}
   Dns.Proofs.parse_print_question_only hh hq hlen
 
 
-theorem Spec.parseHeader_fields
+theorem Dns.Spec.parseHeader_fields
     (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
     (hz : (f2.toNat / 64) % 2 = 0) :
     parseHeader (i1 :: i2 :: f1 :: f2 ::
@@ -43,7 +43,7 @@ theorem Spec.parseHeader_fields
   rw [Dns.Proofs.parseHeader_step, ite_eq_left hz]
   rfl
 
-theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
+theorem Dns.Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
     (hz : (f2.toNat / 64) % 2 = 1) :
     parse (i1 :: i2 :: f1 :: f2 :: rest) = none := by
   have hh : parseHeader (i1 :: i2 :: f1 :: f2 :: rest) = none := by
@@ -86,7 +86,7 @@ theorem parseRecordsIn_length : ∀ (n : Nat) (full bs : List UInt8)
 
 end Dns.Proofs
 
-theorem Spec.parse_reads_header
+theorem Dns.Spec.parse_reads_header
     (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
     {m : Message}
     (hm : parse (i1 :: i2 :: f1 :: f2 ::
@@ -102,7 +102,8 @@ theorem Spec.parse_reads_header
     m.authorities.length = n1.toNat * 256 + n2.toNat ∧
     m.additionals.length = r1.toNat * 256 + r2.toNat := by
   by_cases hz : (f2.toNat / 64) % 2 = 0
-  · simp only [parse, Spec.parseHeader_fields i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 rest hz,
+  · simp only [parse,
+      Dns.Spec.parseHeader_fields i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 rest hz,
       bind, Option.bind_eq_some_iff, Option.bind_some] at hm
     obtain ⟨⟨qs, s1⟩, hq, ⟨ans, s2⟩, ha, ⟨aus, s3⟩, hs, ⟨ads, s4⟩, ht, he⟩ := hm
     by_cases hr : s4 = []
@@ -114,10 +115,10 @@ theorem Spec.parse_reads_header
         Dns.Proofs.parseRecordsIn_length _ _ _ _ _ ht⟩
     · simp only [hr, ite_false] at he
       cases he
-  · rw [Spec.rejects_z_bit i1 i2 f1 f2 _ (by omega)] at hm
+  · rw [Dns.Spec.rejects_z_bit i1 i2 f1 f2 _ (by omega)] at hm
     cases hm
 
-theorem Spec.reads_rfc_4_1_4 :
+theorem Dns.Spec.reads_rfc_4_1_4 :
     parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,
       0, 1, 0, 1, 3, 70, 79, 79, 192, 12, 0, 1,
@@ -131,32 +132,32 @@ theorem Spec.reads_rfc_4_1_4 :
              answers := [], authorities := [], additionals := [] } := by
   decide +kernel
 
-theorem Spec.rejects_pointer_self :
+theorem Dns.Spec.rejects_pointer_self :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       192, 12, 0, 1, 0, 1] : List UInt8)).isSome = false := by
   decide +kernel
 
 
-theorem Spec.rejects_pointer_forward :
+theorem Dns.Spec.rejects_pointer_forward :
     (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       192, 18, 0, 1, 0, 1, 5, 108, 97, 116, 101, 114,
       0, 0, 1, 0, 1] : List UInt8)).isSome = false := by
   decide +kernel
 
 
-theorem Spec.rejects_pointer_past_end :
+theorem Dns.Spec.rejects_pointer_past_end :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       195, 255, 0, 1, 0, 1] : List UInt8)).isSome = false := by
   decide +kernel
 
 
-theorem Spec.rejects_pointer_onto_reserved_form :
+theorem Dns.Spec.rejects_pointer_onto_reserved_form :
     (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       3, 97, 98, 99, 0, 0, 1, 0, 1, 192, 14, 0,
       1, 0, 1] : List UInt8)).isSome = false := by
   decide +kernel
 
-theorem Spec.reads_pointer_mid_label :
+theorem Dns.Spec.reads_pointer_mid_label :
     parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       3, 97, 1, 120, 0, 0, 1, 0, 1, 192, 14, 0,
       1, 0, 1] : List UInt8) =
@@ -168,7 +169,7 @@ theorem Spec.reads_pointer_mid_label :
   decide +kernel
 
 
-theorem Spec.rejects_reserved_in_record :
+theorem Dns.Spec.rejects_reserved_in_record :
     (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
       1, 120, 0, 0, 1, 0, 1, 64, 97, 97, 97, 97,
       97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
@@ -180,14 +181,14 @@ theorem Spec.rejects_reserved_in_record :
   decide +kernel
 
 
-theorem Spec.rejects_data_past_end :
+theorem Dns.Spec.rejects_data_past_end :
     (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
       1, 120, 0, 0, 1, 0, 1, 1, 121, 0, 0, 1,
       0, 1, 0, 0, 0, 0, 0, 10, 97, 98, 99] : List UInt8)).isSome = false := by
   decide +kernel
 
 
-theorem Spec.rejects_chain_over_255 :
+theorem Dns.Spec.rejects_chain_over_255 :
     (parse ([0, 7, 1, 0, 0, 5, 0, 0, 0, 0, 0, 0,
       60, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
       97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
@@ -220,12 +221,12 @@ theorem Spec.rejects_chain_over_255 :
   decide +kernel
 
 
-theorem Spec.rejects_pointer_cycle_through_label :
+theorem Dns.Spec.rejects_pointer_cycle_through_label :
     (parse ([0, 0, 0, 0, 0, 4, 97, 98, 99, 100, 192, 5,
       192, 5, 0, 1, 0, 1] : List UInt8)).isSome = false := by
   decide +kernel
 
-theorem Spec.accepts_sixteen_hops :
+theorem Dns.Spec.accepts_sixteen_hops :
     (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
       1, 0, 0, 0, 0, 0, 30, 192, 12, 192, 31, 192,
@@ -235,7 +236,7 @@ theorem Spec.accepts_sixteen_hops :
       0] : List UInt8)).isSome = true := by
   decide +kernel
 
-theorem Spec.rejects_seventeen_hops :
+theorem Dns.Spec.rejects_seventeen_hops :
     (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
       1, 0, 0, 0, 0, 0, 32, 192, 12, 192, 31, 192,
@@ -245,7 +246,7 @@ theorem Spec.rejects_seventeen_hops :
       0, 0, 0] : List UInt8)).isSome = false := by
   decide +kernel
 
-theorem Spec.accepts_sixteen_hops_through_labels :
+theorem Dns.Spec.accepts_sixteen_hops_through_labels :
     (parse ([0, 7, 1, 0, 0, 17, 0, 0, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
       1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
@@ -261,7 +262,7 @@ theorem Spec.accepts_sixteen_hops_through_labels :
       1, 0, 1] : List UInt8)).isSome = true := by
   decide +kernel
 
-theorem Spec.rejects_seventeen_hops_through_labels :
+theorem Dns.Spec.rejects_seventeen_hops_through_labels :
     (parse ([0, 7, 1, 0, 0, 18, 0, 0, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
       1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,

@@ -12,11 +12,11 @@ spec_authors = ["abu-aska"]
 entry_points = ["Main.lean"]
 
 [spec]
-files = ["SPEC.md", "Spec.lean", "Spec/Defs.lean"]
+files = ["SPEC.md", "Dns/Spec.lean", "Dns/Spec/Defs.lean"]
 # The code under proof: the functions the statements are about. Well
-# formedness (Spec.WF and the predicates it uses) and the wire length of
-# a name only give the statements their meaning, so they are in the spec
-# files above, not here.
+# formedness (Dns.Spec.WF and the predicates it uses) and the wire length
+# of a name only give the statements their meaning, so they are in the
+# spec files above, not here.
 code = [
   # The data types the statements are about, their constructors, and
   # their fields.

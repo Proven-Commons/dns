@@ -14,7 +14,7 @@
 
   Numbers are held as plain natural numbers, not as fixed width
   types. Well formedness, which states the wire bounds, is part
-  of the specification, in `Spec/Defs.lean`.
+  of the specification, in `Dns/Spec/Defs.lean`.
 
   Names in this model are always expanded. A name is a list of
   labels, and a label is a list of bytes. Compression can occur

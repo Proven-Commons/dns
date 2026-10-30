@@ -13,16 +13,16 @@
   only the suffix at the front matters on those steps, and the
   name and the bytes after it come back unchanged.
 
-  Well formedness, `Spec.WF` and the predicates under it, is part
-  of the specification, in `Spec/Defs.lean`.
+  Well formedness, `Dns.Spec.WF` and the predicates under it, is
+  part of the specification, in `Dns/Spec/Defs.lean`.
 -/
 
 import Dns
-import Spec.Defs
+import Dns.Spec.Defs
 
 namespace Dns.Proofs
 
-open Dns Spec
+open Dns Dns.Spec
 
 /-- A byte printed from a number reads back as the number modulo
     256. -/

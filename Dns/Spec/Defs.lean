@@ -1,16 +1,16 @@
 /-
-  The definitions the statements in `Spec.lean` use besides the
+  The definitions the statements in `Dns/Spec.lean` use besides the
   code under proof: well formedness of a message, which states
   the wire bounds each field must fit, and the expanded wire
   length of a name it uses. They give the statements their
   meaning, and the parser and printer do not use them, so they
-  are part of the specification, with `Spec.lean` and
+  are part of the specification, with `Dns/Spec.lean` and
   `SPEC.md`, not of the code (`bar.toml` lists the code).
 -/
 
 import Dns
 
-namespace Spec
+namespace Dns.Spec
 
 open Dns
 
@@ -57,4 +57,4 @@ def WF (m : Message) : Prop :=
     m.questions.length < 65536 ∧ m.answers.length < 65536 ∧
     m.authorities.length < 65536 ∧ m.additionals.length < 65536
 
-end Spec
+end Dns.Spec

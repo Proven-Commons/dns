@@ -15,9 +15,9 @@ a compressed name is expanded while reading. Names in the
 model are always expanded, and the printer never writes
 compression.
 
-The statements a reviewer approves are in `Spec.lean`,
-with the definitions they use in `Spec/Defs.lean` and
-their proofs in `Proofs/SpecProofs.lean`. No reviewer
+The statements a reviewer approves are in `Dns/Spec.lean`,
+with the definitions they use in `Dns/Spec/Defs.lean` and
+their proofs in `Dns/Proofs/SpecProofs.lean`. No reviewer
 has approved them yet, so this project is not called
 verified.
 
@@ -57,7 +57,7 @@ difference no named rule explains is a failure.
 `python3 tests/planted_bugs.py` plants ten bugs in the
 parser and printer, one at a time, each in a scratch copy
 of the project. For each it records, in
-`tests/PLANTED-BUGS.md`, which statements of `Spec.lean`
+`tests/PLANTED-BUGS.md`, which statements of `Dns/Spec.lean`
 the changed code makes false and how many failures the
 tests find. A statement over every input is checked there
 on a few instances only, so the record can show such a
@@ -66,32 +66,32 @@ statement false, never true.
 ## What is proved
 
 Each claim below names the theorem behind it. The
-theorems are stated in `Spec.lean` (the challenge file,
+theorems are stated in `Dns/Spec.lean` (the challenge file,
 where they end in `sorry`) and proved in
-`Proofs/SpecProofs.lean`, under the same names.
+`Dns/Proofs/SpecProofs.lean`, under the same names.
 `comparator.json` lists all of them.
 
 | Claim | Theorem |
 |-------|---------|
-| Parsing the printed form of a well formed message gives the message back, all four sections. | `Spec.parse_print` |
-| The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Spec.parse_print_question_only` |
-| Every message the parser accepts has the header its first twelve bytes give, each field from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give it (AD from 0x20 and CD from 0x10 of the fourth byte), and as many entries in each section as that section's count says. | `Spec.parse_reads_header` |
-| The header reader that the parser calls first accepts every twelve header bytes whose Z bit (0x40 of the fourth byte) is clear, and reads the fields from the same bits: AD and CD are read into the header, not turned away. | `Spec.parseHeader_fields` |
-| A message with the Z bit set is refused, whatever its other bytes. | `Spec.rejects_z_bit` |
-| The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Spec.reads_rfc_4_1_4` |
-| A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Spec.rejects_pointer_self` |
-| A pointer that aims forward, at a name later in the message, is refused, on an input where no other rule refuses it: the first question's name points at the second's. | `Spec.rejects_pointer_forward` |
-| A pointer whose target lies past the end of the message is refused. | `Spec.rejects_pointer_past_end` |
-| A pointer whose target byte is a reserved length form is refused: here it lands inside a label, on the byte 0x62. | `Spec.rejects_pointer_onto_reserved_form` |
-| A pointer into the middle of a label is read like any other target when the bytes there read as a name: here the second name reads as x. | `Spec.reads_pointer_mid_label` |
-| A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Spec.rejects_reserved_in_record` |
-| A record whose data length runs past the end of the message is refused. | `Spec.rejects_data_past_end` |
-| An expanded name over 255 bytes, reached by chaining pointers, is refused. | `Spec.rejects_chain_over_255` |
-| A pointer cycle that passes through a label is refused. The theorem does not say which rule refuses it (see below). | `Spec.rejects_pointer_cycle_through_label` |
-| A name that follows 16 pointers, the limit, is read. | `Spec.accepts_sixteen_hops` |
-| A name that follows 17 pointers is refused. | `Spec.rejects_seventeen_hops` |
-| A name that follows 16 pointers with a label between each two is read. | `Spec.accepts_sixteen_hops_through_labels` |
-| A name that follows 17 pointers with a label between each two is refused, though its expanded form takes only 37 of the 255 budget bytes: the pointer count runs on across labels. | `Spec.rejects_seventeen_hops_through_labels` |
+| Parsing the printed form of a well formed message gives the message back, all four sections. | `Dns.Spec.parse_print` |
+| The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Dns.Spec.parse_print_question_only` |
+| Every message the parser accepts has the header its first twelve bytes give, each field from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give it (AD from 0x20 and CD from 0x10 of the fourth byte), and as many entries in each section as that section's count says. | `Dns.Spec.parse_reads_header` |
+| The header reader that the parser calls first accepts every twelve header bytes whose Z bit (0x40 of the fourth byte) is clear, and reads the fields from the same bits: AD and CD are read into the header, not turned away. | `Dns.Spec.parseHeader_fields` |
+| A message with the Z bit set is refused, whatever its other bytes. | `Dns.Spec.rejects_z_bit` |
+| The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Dns.Spec.reads_rfc_4_1_4` |
+| A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Dns.Spec.rejects_pointer_self` |
+| A pointer that aims forward, at a name later in the message, is refused, on an input where no other rule refuses it: the first question's name points at the second's. | `Dns.Spec.rejects_pointer_forward` |
+| A pointer whose target lies past the end of the message is refused. | `Dns.Spec.rejects_pointer_past_end` |
+| A pointer whose target byte is a reserved length form is refused: here it lands inside a label, on the byte 0x62. | `Dns.Spec.rejects_pointer_onto_reserved_form` |
+| A pointer into the middle of a label is read like any other target when the bytes there read as a name: here the second name reads as x. | `Dns.Spec.reads_pointer_mid_label` |
+| A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Dns.Spec.rejects_reserved_in_record` |
+| A record whose data length runs past the end of the message is refused. | `Dns.Spec.rejects_data_past_end` |
+| An expanded name over 255 bytes, reached by chaining pointers, is refused. | `Dns.Spec.rejects_chain_over_255` |
+| A pointer cycle that passes through a label is refused. The theorem does not say which rule refuses it (see below). | `Dns.Spec.rejects_pointer_cycle_through_label` |
+| A name that follows 16 pointers, the limit, is read. | `Dns.Spec.accepts_sixteen_hops` |
+| A name that follows 17 pointers is refused. | `Dns.Spec.rejects_seventeen_hops` |
+| A name that follows 16 pointers with a label between each two is read. | `Dns.Spec.accepts_sixteen_hops_through_labels` |
+| A name that follows 17 pointers with a label between each two is refused, though its expanded form takes only 37 of the 255 budget bytes: the pointer count runs on across labels. | `Dns.Spec.rejects_seventeen_hops_through_labels` |
 
 A message is well formed when its header fields fit their
 widths (the identifier in two bytes, QR, AA, TC, RD, RA, AD,
@@ -101,16 +101,16 @@ fit two bytes, TTL fits four bytes, each record's data
 length fits two bytes, every label of every expanded name
 holds 1 to 63 bytes, and every expanded name fits the 255
 byte wire bound. The full list is in `SPEC.md`, and the
-definition, `Spec.WF`, in `Spec/Defs.lean`.
+definition, `Dns.Spec.WF`, in `Dns/Spec/Defs.lean`.
 
 The round trip theorems rest on the proofs in
-`Proofs/RoundTrip.lean`, where they are
+`Dns/Proofs/RoundTrip.lean`, where they are
 `Dns.Proofs.parse_print` and
 `Dns.Proofs.parse_print_question_only`. Both check against
 the standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`), which a reader can confirm with
 `#print axioms`, or by running
-`lake env lean Proofs/Verify.lean`, which prints the axiom
+`lake env lean Dns/Proofs/Verify.lean`, which prints the axiom
 list for the headline theorem. The three header theorems
 hold for every input. The other theorems, refusals and
 readings, are about one input each, checked in the kernel
@@ -129,8 +129,8 @@ are about.
 - That the parser accepts every message the rules in
   `SPEC.md` allow, and turns away every message they
   forbid. The round trips do not need either. Apart from
-  the header, where `Spec.parse_reads_header`,
-  `Spec.parseHeader_fields` and `Spec.rejects_z_bit`
+  the header, where `Dns.Spec.parse_reads_header`,
+  `Dns.Spec.parseHeader_fields` and `Dns.Spec.rejects_z_bit`
   cover every input, the refusal theorems pin single
   inputs only, so neither holds in general as a proof.
   The differential tests in `tests/` check that
@@ -139,18 +139,18 @@ are about.
 - That a compressed message parses to the message with
   its names expanded. The round trips cover printed
   messages, which hold no pointer, so they never read
-  one. `Spec.reads_rfc_4_1_4` and
-  `Spec.reads_pointer_mid_label` state it for one input
+  one. `Dns.Spec.reads_rfc_4_1_4` and
+  `Dns.Spec.reads_pointer_mid_label` state it for one input
   each; the differential tests check it on many more,
   and the results file counts how many of them hold a
   pointer.
 - Which rule refuses a refused input. Each refusal
   theorem says that its input is refused, not why. In
-  particular `Spec.rejects_pointer_cycle_through_label`
+  particular `Dns.Spec.rejects_pointer_cycle_through_label`
   would hold for a parser without the pointer limit too,
   since the 255 byte budget also ends that cycle. That
   the pointer count runs on across labels is stated on
-  its own input, `Spec.rejects_seventeen_hops_through_labels`,
+  its own input, `Dns.Spec.rejects_seventeen_hops_through_labels`,
   where the budget leaves the name alone; the comments in
   `Dns/Parse.lean` and `SPEC.md` say which rule ends each
   loop, as a reading of the code, not as a theorem.
@@ -213,7 +213,7 @@ are about.
 ## Re-check it
 
 1. `lake comparator --paranoid`: builds the challenge
-   file `Spec.lean` and the proofs in a sandbox and
+   file `Dns/Spec.lean` and the proofs in a sandbox and
    checks that each theorem named in `comparator.json`
    proves exactly the statement in the challenge file,
    uses no axiom but the three standard ones, and is
@@ -231,7 +231,7 @@ are about.
    case, and the results file lists the named
    differences; it says so when dnspython is absent.
 3. `lake build`: the library, the proofs, and the tool
-   build clean, and `lake env lean Proofs/Verify.lean`
+   build clean, and `lake env lean Dns/Proofs/Verify.lean`
    prints the axiom list for the headline round trip
    theorem.
 4. `python3 tests/planted_bugs.py`: each planted bug,

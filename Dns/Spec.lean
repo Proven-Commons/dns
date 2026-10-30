@@ -3,41 +3,41 @@
 
   A reviewer who did not write this file approves it, and
   `bar.toml` records the SHA-256 it had then. The proofs live
-  in `Proofs` (`Proofs/SpecProofs.lean`); `lake comparator`
+  in `Dns.Proofs` (`Dns/Proofs/SpecProofs.lean`); `lake comparator`
   checks that each one proves exactly the statement written
   here. The `sorry` below is expected in this file only.
 
   The statements use the definitions in `Dns/Value.lean` and
   `Dns/Parse.lean`, the code under proof named in `bar.toml`,
-  and well formedness (`Spec.WF` and the predicates it uses),
-  which is in `Spec/Defs.lean`. That file is part of the
+  and well formedness (`Dns.Spec.WF` and the predicates it uses),
+  which is in `Dns/Spec/Defs.lean`. That file is part of the
   specification too.
 -/
 
 import Dns
-import Spec.Defs
+import Dns.Spec.Defs
 
-open Dns Spec
+open Dns Dns.Spec
 
 /-! ## The round trips
 
 The statements the slice stands on. Each one is the statement
 of the proved theorem of the same shape in
-`Proofs/RoundTrip.lean`, over the same well formedness
-predicate, `Spec.WF`. -/
+`Dns/Proofs/RoundTrip.lean`, over the same well formedness
+predicate, `Dns.Spec.WF`. -/
 
 /-- Parsing the printed form of a well formed message gives
     the message back, all four sections. The printed form
     holds no compression, so this statement is about the
     uncompressed printing. -/
-theorem Spec.parse_print {m : Message} (hw : WF m) :
+theorem Dns.Spec.parse_print {m : Message} (hw : WF m) :
     parse (print m) = some m := sorry
 
 /-- The question only case of the same claim, the first
     slice's result: a message with a well formed header and
     well formed questions, and the other three sections
     empty, parses back from its printed form. -/
-theorem Spec.parse_print_question_only {h : Header}
+theorem Dns.Spec.parse_print_question_only {h : Header}
     {qs : List Question} (hh : WFHeader h)
     (hq : ∀ q ∈ qs, WFQuestion q)
     (hlen : qs.length < 65536) :
@@ -63,8 +63,8 @@ section 2. -/
     3.2.2), and the RCODE (0x0F). The identifier and the four
     counts (questions, answers, authority records, additional
     records) are big endian byte pairs. Z is not held: a
-    message with Z set is refused (`Spec.rejects_z_bit`). -/
-theorem Spec.parse_reads_header
+    message with Z set is refused (`Dns.Spec.rejects_z_bit`). -/
+theorem Dns.Spec.parse_reads_header
     (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
     {m : Message}
     (hm : parse (i1 :: i2 :: f1 :: f2 ::
@@ -87,7 +87,7 @@ theorem Spec.parse_reads_header
     like any other flag: a header with either set is not
     turned away for it. The counts are the next four big
     endian byte pairs. -/
-theorem Spec.parseHeader_fields
+theorem Dns.Spec.parseHeader_fields
     (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
     (hz : (f2.toNat / 64) % 2 = 0) :
     parseHeader (i1 :: i2 :: f1 :: f2 ::
@@ -104,7 +104,7 @@ theorem Spec.parseHeader_fields
 /-- A message whose Z bit (0x40 of the fourth byte) is set is
     refused, whatever the other bytes hold. Z is the one flag
     bit RFC 6895 section 2 still reserves. -/
-theorem Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
+theorem Dns.Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
     (hz : (f2.toNat / 64) % 2 = 1) :
     parse (i1 :: i2 :: f1 :: f2 :: rest) = none := sorry
 
@@ -121,7 +121,7 @@ form. -/
     question's name is the label FOO and a pointer to offset
     12. The message parses, with the second name expanded to
     FOO.F.ISI.ARPA. -/
-theorem Spec.reads_rfc_4_1_4 :
+theorem Dns.Spec.reads_rfc_4_1_4 :
     parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,
       0, 1, 0, 1, 3, 70, 79, 79, 192, 12, 0, 1,
@@ -151,7 +151,7 @@ concrete case. -/
 /-- A pointer that aims at its own position is refused.
     The name at offset 12 is a pointer to offset 12, and a
     target must be strictly earlier than the pointer. -/
-theorem Spec.rejects_pointer_self :
+theorem Dns.Spec.rejects_pointer_self :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       192, 12, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
 
@@ -164,7 +164,7 @@ theorem Spec.rejects_pointer_self :
     strictly earlier than the pointer turns it away: a
     reader that allowed forward pointers would read both
     names as later. -/
-theorem Spec.rejects_pointer_forward :
+theorem Dns.Spec.rejects_pointer_forward :
     (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       192, 18, 0, 1, 0, 1, 5, 108, 97, 116, 101, 114,
       0, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
@@ -172,7 +172,7 @@ theorem Spec.rejects_pointer_forward :
 /-- A pointer whose target lies past the end of the
     message is refused. The name at offset 12 points at
     offset 1023 in a message of 18 bytes. -/
-theorem Spec.rejects_pointer_past_end :
+theorem Dns.Spec.rejects_pointer_past_end :
     (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
       195, 255, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
 
@@ -182,8 +182,8 @@ theorem Spec.rejects_pointer_past_end :
     byte there, 98 (0x62), has exactly one of its top two
     bits set, so it is the reserved form, and reading at
     the target refuses it. Landing inside a label is not
-    itself refused: see `Spec.reads_pointer_mid_label`. -/
-theorem Spec.rejects_pointer_onto_reserved_form :
+    itself refused: see `Dns.Spec.reads_pointer_mid_label`. -/
+theorem Dns.Spec.rejects_pointer_onto_reserved_form :
     (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       3, 97, 98, 99, 0, 0, 1, 0, 1, 192, 14, 0,
       1, 0, 1] : List UInt8)).isSome = false := sorry
@@ -194,7 +194,7 @@ theorem Spec.rejects_pointer_onto_reserved_form :
     is the one label of the bytes 97, 1, 120. The second
     name is a pointer to offset 14, inside that label,
     where the bytes 1, 120, 0 read as the name x. -/
-theorem Spec.reads_pointer_mid_label :
+theorem Dns.Spec.reads_pointer_mid_label :
     parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
       3, 97, 1, 120, 0, 0, 1, 0, 1, 192, 14, 0,
       1, 0, 1] : List UInt8) =
@@ -207,7 +207,7 @@ theorem Spec.reads_pointer_mid_label :
 /-- A reserved length form in a record name is refused.
     The answer record's name starts with the byte 64,
     which has exactly one of its top two bits set. -/
-theorem Spec.rejects_reserved_in_record :
+theorem Dns.Spec.rejects_reserved_in_record :
     (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
       1, 120, 0, 0, 1, 0, 1, 64, 97, 97, 97, 97,
       97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
@@ -220,7 +220,7 @@ theorem Spec.rejects_reserved_in_record :
 /-- A record whose data length runs past the end of the
     message is refused. The length says 10 bytes of data
     and 3 stand in the message. -/
-theorem Spec.rejects_data_past_end :
+theorem Dns.Spec.rejects_data_past_end :
     (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
       1, 120, 0, 0, 1, 0, 1, 1, 121, 0, 0, 1,
       0, 1, 0, 0, 0, 0, 0, 10, 97, 98, 99] : List UInt8)).isSome = false := sorry
@@ -230,7 +230,7 @@ theorem Spec.rejects_data_past_end :
     label and points at the name before it, and the
     fifth expansion needs 306 wire bytes, over the 255
     byte budget. -/
-theorem Spec.rejects_chain_over_255 :
+theorem Dns.Spec.rejects_chain_over_255 :
     (parse ([0, 7, 1, 0, 0, 5, 0, 0, 0, 0, 0, 0,
       60, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
       97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
@@ -274,8 +274,8 @@ theorem Spec.rejects_chain_over_255 :
     parser without the limit would still refuse it, by
     the budget, after 51 passes. That the pointer count
     runs on across labels is pinned on its own input by
-    `Spec.rejects_seventeen_hops_through_labels`. -/
-theorem Spec.rejects_pointer_cycle_through_label :
+    `Dns.Spec.rejects_seventeen_hops_through_labels`. -/
+theorem Dns.Spec.rejects_pointer_cycle_through_label :
     (parse ([0, 0, 0, 0, 0, 4, 97, 98, 99, 100, 192, 5,
       192, 5, 0, 1, 0, 1] : List UInt8)).isSome = false := sorry
 
@@ -287,7 +287,7 @@ theorem Spec.rejects_pointer_cycle_through_label :
     of them, so reading it follows 16 pointers. Both
     records have type 65280, a private use type (RFC 6895
     section 3.1), so every reader holds their data opaque. -/
-theorem Spec.accepts_sixteen_hops :
+theorem Dns.Spec.accepts_sixteen_hops :
     (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
       1, 0, 0, 0, 0, 0, 30, 192, 12, 192, 31, 192,
@@ -298,7 +298,7 @@ theorem Spec.accepts_sixteen_hops :
 
 /-- A name that follows 17 pointers is refused: the same
     shape as above with one more pointer in the chain. -/
-theorem Spec.rejects_seventeen_hops :
+theorem Dns.Spec.rejects_seventeen_hops :
     (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
       1, 0, 0, 0, 0, 0, 32, 192, 12, 192, 31, 192,
@@ -314,7 +314,7 @@ theorem Spec.rejects_seventeen_hops :
     pointer to the name of the question before. Reading the
     last name, q.p.o and on down to a, follows 16 pointers,
     and its expanded form takes 35 of the 255 budget bytes. -/
-theorem Spec.accepts_sixteen_hops_through_labels :
+theorem Dns.Spec.accepts_sixteen_hops_through_labels :
     (parse ([0, 7, 1, 0, 0, 17, 0, 0, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
       1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
@@ -336,7 +336,7 @@ theorem Spec.accepts_sixteen_hops_through_labels :
     pointers; a count that started again at each label would
     read this name, whose expanded form takes only 37 of the
     255 budget bytes. -/
-theorem Spec.rejects_seventeen_hops_through_labels :
+theorem Dns.Spec.rejects_seventeen_hops_through_labels :
     (parse ([0, 7, 1, 0, 0, 18, 0, 0, 0, 0, 0, 0,
       1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
       1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,

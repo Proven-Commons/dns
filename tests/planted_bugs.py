@@ -6,7 +6,7 @@ Each planted bug is a small change to the code under proof in
 copies the project to a scratch directory, makes the change,
 builds the library and the tool, and then asks two things:
 
-1. Which statements of `Spec.lean` are false for the changed
+1. Which statements of `Dns/Spec.lean` are false for the changed
    code. A single-input statement is checked as written. A
    statement over every input cannot be checked that way, so it
    is checked on the instances listed in INSTANCES below: a
@@ -107,34 +107,34 @@ BUGS = [
 # a closed proposition that `decide +kernel` settles. The first
 # word names the statement it is an instance of.
 INSTANCES = [
-    ("Spec.parse_print", "parse (print mAD) = some mAD"),
-    ("Spec.parse_print", "parse (print mCD) = some mCD"),
-    ("Spec.parse_print", "parse (print mRecords) = some mRecords"),
-    ("Spec.parse_print_question_only", "parse (print mQ) = some mQ"),
-    ("Spec.parse_reads_header",
+    ("Dns.Spec.parse_print", "parse (print mAD) = some mAD"),
+    ("Dns.Spec.parse_print", "parse (print mCD) = some mCD"),
+    ("Dns.Spec.parse_print", "parse (print mRecords) = some mRecords"),
+    ("Dns.Spec.parse_print_question_only", "parse (print mQ) = some mQ"),
+    ("Dns.Spec.parse_reads_header",
      "(parse ([0, 7, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8)).map"
      " (fun m => (m.header.rd, m.header.ad, m.header.cd)) = some (1, 1, 0)"),
-    ("Spec.parse_reads_header",
+    ("Dns.Spec.parse_reads_header",
      "(parse ([0, 7, 1, 16, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8)).map"
      " (fun m => (m.header.rd, m.header.ad, m.header.cd)) = some (1, 0, 1)"),
-    ("Spec.parse_reads_header",
+    ("Dns.Spec.parse_reads_header",
      "(parse ([0, 7, 129, 160, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8)).map"
      " (fun m => (m.header.qr, m.header.rd, m.header.ra, m.header.ad,"
      " m.header.cd)) = some (1, 1, 1, 1, 0)"),
-    ("Spec.parse_reads_header",
+    ("Dns.Spec.parse_reads_header",
      "(parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0, 1, 120, 0, 0, 1, 0, 1,"
      " 1, 121, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0] : List UInt8)).map"
      " (fun m => (m.questions.length, m.answers.length, m.authorities.length,"
      " m.additionals.length)) = some (1, 1, 0, 0)"),
-    ("Spec.parseHeader_fields",
+    ("Dns.Spec.parseHeader_fields",
      "(parseHeader ([0, 7, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8)).map"
      " (fun x => (x.1.ad, x.1.cd)) = some (1, 0)"),
-    ("Spec.parseHeader_fields",
+    ("Dns.Spec.parseHeader_fields",
      "(parseHeader ([0, 7, 1, 16, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8)).map"
      " (fun x => (x.1.ad, x.1.cd)) = some (0, 1)"),
-    ("Spec.rejects_z_bit",
+    ("Dns.Spec.rejects_z_bit",
      "parse ([0, 7, 1, 64, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8) = none"),
-    ("Spec.rejects_z_bit",
+    ("Dns.Spec.rejects_z_bit",
      "parse ([0, 7, 129, 224, 0, 0, 0, 0, 0, 0, 0, 0] : List UInt8) = none"),
 ]
 
@@ -185,9 +185,9 @@ def check_file():
     negation, both by `decide +kernel`, so exactly one of them
     must go through. Returns the text and the statement each
     numbered check belongs to."""
-    spec = (ROOT / "Spec.lean").read_text()
+    spec = (ROOT / "Dns" / "Spec.lean").read_text()
     props = []
-    for m in re.finditer(r"^theorem (Spec\.\w+) :\n(.*?):= sorry", spec, re.S | re.M):
+    for m in re.finditer(r"^theorem (Dns\.Spec\.\w+) :\n(.*?):= sorry", spec, re.S | re.M):
         props.append((m.group(1), m.group(2).strip()))
     props += INSTANCES
     lines = ["import Dns", "", "open Dns", "", MESSAGES]
@@ -297,7 +297,7 @@ def main():
         "",
         "Written by `python3 tests/planted_bugs.py`. Each planted bug is a small",
         "change to the code under proof, made in a scratch copy of the project.",
-        "For each, the script lists the statements of `Spec.lean` that are false",
+        "For each, the script lists the statements of `Dns/Spec.lean` that are false",
         "for the changed code, and the failures `tests/run_tests.py` records",
         "against the changed tool. Rerun it to check these rows.",
         "",
