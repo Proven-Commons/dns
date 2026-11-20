@@ -1,73 +1,35 @@
 # dns: a DNS wire format parser and printer, with a proved round trip
 
-A parser and printer for the header and question section of a
-DNS message, in Lean, following RFC 1035 sections 3 and 4. The
+Status: in progress
+
+A parser and printer for a whole DNS message, in Lean,
+following RFC 1035 sections 3, 4.1, and 4.1.4. The
 definitions are in `Dns/Value.lean` (the data model and the
-printer) and `Dns/Parse.lean` (the parser). The proof is in
-`Dns/Proofs/RoundTrip.lean`. This slice reads no resource records
-and no name compression.
+printer) and `Dns/Parse.lean` (the parser). The rules are
+written out in `SPEC.md`.
 
-## What is proved
+The first slice read the header and the question section
+only. This slice adds the answer, authority, and additional
+sections of resource records, and it reads name compression:
+a compressed name is expanded while reading. Names in the
+model are always expanded, and the printer never writes
+compression.
 
-| Claim | Theorem |
-|-------|---------|
-| Parsing the printed form of a well formed message gives the message back. | `Dns.Proofs.parse_print` |
+The statements a reviewer approves are in `Dns/Spec.lean`,
+with the definitions they use in `Dns/Spec/Defs.lean` and
+their proofs in `Dns/Proofs/SpecProofs.lean`. No reviewer
+has approved them yet, so this project is not called
+verified.
 
-A message is well formed when its header fields fit their
-widths (the identifier in two bytes, QR, AA, TC, RD, and RA
-each 0 or 1, the opcode and the RCODE in four bits), its
-question count fits two bytes, every QTYPE and QCLASS fits two
-bytes, every label holds 1 to 63 bytes, and every name fits
-the 255 byte wire bound. `parse_print` checks against the
-standard axioms only (`propext`, `Classical.choice`,
-`Quot.sound`), which a reader can confirm with
-`#print axioms Dns.Proofs.parse_print`.
+## How to run it
 
-The command-line tool in `Main.lean` calls these functions
-directly.
-
-## What is not proved
-
-- That the parser accepts every message the rules in `SPEC.md`
-  allow, and turns away every message they forbid. The round
-  trip does not need either, so neither is proved. The
-  differential tests in `tests/` check that behaviour instead,
-  and the results file records the outcome, including any
-  failure.
-- Anything about the answer, authority, or additional
-  sections, and anything about resource records. This slice
-  turns a message away when any of those counts is nonzero.
-- Name compression. A length byte with a top bit set, pointer
-  or reserved form, turns the message away.
-- Text form names. This layer works on wire bytes only; the
-  dotted form is neither read nor printed.
-- Reading requests and printing answers in `Main.lean`:
-  splitting lines, the decimal parser. The tests cover them,
-  malformed requests included.
-- Speed. The code works on lists of bytes, which suits proofs,
-  not large data.
-
-## What you must trust
-
-- The Lean kernel, which checks the proofs.
-- The Lean compiler, with the C compiler and linker shipped
-  with it, and the runtime, which turn the proved definitions
-  into the program that runs.
-- Lean's core library, including the compiled code it puts in
-  place of some definitions the proofs reason about.
-- The operating system and hardware it runs on.
-- The strict Python reading of the rules in `SPEC.md`, written
-  in the test harness, as the oracle in the differential tests.
-  The Python `dnspython` module was not present in the build
-  environment, so no cross check against it was run; the
-  results file says so.
-
-This project has no dependencies beyond Lean itself.
-
-## Run it
-
-Needs Linux and [elan](https://github.com/leanprover/elan).
-Build, then feed request lines to the tool:
+`lake build` builds the library, the proofs, and the
+command line tool. The tool reads one request per line: an
+operation word, a space, and the message as comma-separated
+decimal byte codes. It answers `ok:` and the byte codes of
+the canonical reprint when the message parses, `none` when
+the message is turned away, and `error` when the request
+itself is malformed.
 
 ```
 lake build
@@ -75,19 +37,206 @@ printf 'parse 0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,1\n' | .lake/build/bin/dns
 ```
 
 That request is a query with the root name, QTYPE 1, and
-QCLASS 1, and the answer is `ok:` with the same codes back. A
-message the parser turns away, such as the single code `0`,
-answers `none`. A malformed request answers `error`. See
-`SPEC.md` for the full protocol.
+QCLASS 1, and the answer is `ok:` with the same codes back.
+A `sections` request with the same bytes answers `ok:` with
+the codes of the summary text SPEC.md defines. A message
+the parser turns away, such as the single code `0`, answers
+`none`. See `SPEC.md` for the full protocol.
+
+`python3 tests/run_tests.py` rebuilds the tool, runs the
+fixed cases, the differential run against the harness
+oracle, the mutation and whole message runs, the
+compression runs and the mutations at each pointer, and the
+rejection and malformed cases, and writes the outcome to
+`tests/TEST-RESULTS.md`. When the Python dnspython module
+can be imported (`pip install dnspython`), dnspython also
+judges the answers, and the results file lists every
+difference from it, each explained by a named rule; a
+difference no named rule explains is a failure.
+
+`python3 tests/planted_bugs.py` plants ten bugs in the
+parser and printer, one at a time, each in a scratch copy
+of the project. For each it records, in
+`tests/PLANTED-BUGS.md`, which statements of `Dns/Spec.lean`
+the changed code makes false and how many failures the
+tests find. A statement over every input is checked there
+on a few instances only, so the record can show such a
+statement false, never true.
+
+## What is proved
+
+Each claim below names the theorem behind it. The
+theorems are stated in `Dns/Spec.lean` (the challenge file,
+where they end in `sorry`) and proved in
+`Dns/Proofs/SpecProofs.lean`, under the same names.
+`comparator.json` lists all of them.
+
+| Claim | Theorem |
+|-------|---------|
+| Parsing the printed form of a well formed message gives the message back, all four sections. | `Dns.Spec.parse_print` |
+| The first slice's question-only case of that claim: a well formed header and well formed questions, with the other three sections empty. | `Dns.Spec.parse_print_question_only` |
+| Every message the parser accepts has the header its first twelve bytes give, each field from the bits RFC 1035 section 4.1.1 and RFC 6895 section 2 give it (AD from 0x20 and CD from 0x10 of the fourth byte), and as many entries in each section as that section's count says. | `Dns.Spec.parse_reads_header` |
+| The header reader that the parser calls first accepts every twelve header bytes whose Z bit (0x40 of the fourth byte) is clear, and reads the fields from the same bits: AD and CD are read into the header, not turned away. | `Dns.Spec.parseHeader_fields` |
+| A message with the Z bit set is refused, whatever its other bytes. | `Dns.Spec.rejects_z_bit` |
+| The RFC 1035 section 4.1.4 example parses, its second name, the label FOO and a pointer, expanded to FOO.F.ISI.ARPA. This is one input; no theorem says every compressed message reads to its expanded form (see below). | `Dns.Spec.reads_rfc_4_1_4` |
+| A pointer that aims at its own position is refused: a target must be strictly earlier than the pointer. | `Dns.Spec.rejects_pointer_self` |
+| A pointer that aims forward, at a name later in the message, is refused, on an input where no other rule refuses it: the first question's name points at the second's. | `Dns.Spec.rejects_pointer_forward` |
+| A pointer whose target lies past the end of the message is refused. | `Dns.Spec.rejects_pointer_past_end` |
+| A pointer whose target byte is a reserved length form is refused: here it lands inside a label, on the byte 0x62. | `Dns.Spec.rejects_pointer_onto_reserved_form` |
+| A pointer into the middle of a label is read like any other target when the bytes there read as a name: here the second name reads as x. | `Dns.Spec.reads_pointer_mid_label` |
+| A reserved length form in a record name is refused: a length byte with exactly one top bit set. | `Dns.Spec.rejects_reserved_in_record` |
+| A record whose data length runs past the end of the message is refused. | `Dns.Spec.rejects_data_past_end` |
+| An expanded name over 255 bytes, reached by chaining pointers, is refused. | `Dns.Spec.rejects_chain_over_255` |
+| A pointer cycle that passes through a label is refused. The theorem does not say which rule refuses it (see below). | `Dns.Spec.rejects_pointer_cycle_through_label` |
+| A name that follows 16 pointers, the limit, is read. | `Dns.Spec.accepts_sixteen_hops` |
+| A name that follows 17 pointers is refused. | `Dns.Spec.rejects_seventeen_hops` |
+| A name that follows 16 pointers with a label between each two is read. | `Dns.Spec.accepts_sixteen_hops_through_labels` |
+| A name that follows 17 pointers with a label between each two is refused, though its expanded form takes only 37 of the 255 budget bytes: the pointer count runs on across labels. | `Dns.Spec.rejects_seventeen_hops_through_labels` |
+
+A message is well formed when its header fields fit their
+widths (the identifier in two bytes, QR, AA, TC, RD, RA, AD,
+and CD each 0 or 1, the opcode and the RCODE in four bits), each
+section count fits two bytes, QTYPE, QCLASS, TYPE, and CLASS
+fit two bytes, TTL fits four bytes, each record's data
+length fits two bytes, every label of every expanded name
+holds 1 to 63 bytes, and every expanded name fits the 255
+byte wire bound. The full list is in `SPEC.md`, and the
+definition, `Dns.Spec.WF`, in `Dns/Spec/Defs.lean`.
+
+The round trip theorems rest on the proofs in
+`Dns/Proofs/RoundTrip.lean`, where they are
+`Dns.Proofs.parse_print` and
+`Dns.Proofs.parse_print_question_only`. Both check against
+the standard axioms only (`propext`, `Classical.choice`,
+`Quot.sound`), which a reader can confirm with
+`#print axioms`, or by running
+`lake env lean Dns/Proofs/Verify.lean`, which prints the axiom
+list for the headline theorem. The three header theorems
+hold for every input. The other theorems, refusals and
+readings, are about one input each, checked in the kernel
+with `decide +kernel`.
+Under the round trips, the steps are proved one by one in
+the same file: the two and four byte numbers both ways, the
+name reader on printed names, questions and records on
+their printed forms, and the header both ways.
+
+The command line tool in `Main.lean` calls `Dns.parse`
+and `Dns.print` directly, the same functions the theorems
+are about.
+
+## What is not proved
+
+- That the parser accepts every message the rules in
+  `SPEC.md` allow, and turns away every message they
+  forbid. The round trips do not need either. Apart from
+  the header, where `Dns.Spec.parse_reads_header`,
+  `Dns.Spec.parseHeader_fields` and `Dns.Spec.rejects_z_bit`
+  cover every input, the refusal theorems pin single
+  inputs only, so neither holds in general as a proof.
+  The differential tests in `tests/` check that
+  behaviour instead, and the results
+  file records the outcome, including any failure.
+- That a compressed message parses to the message with
+  its names expanded. The round trips cover printed
+  messages, which hold no pointer, so they never read
+  one. `Dns.Spec.reads_rfc_4_1_4` and
+  `Dns.Spec.reads_pointer_mid_label` state it for one input
+  each; the differential tests check it on many more,
+  and the results file counts how many of them hold a
+  pointer.
+- Which rule refuses a refused input. Each refusal
+  theorem says that its input is refused, not why. In
+  particular `Dns.Spec.rejects_pointer_cycle_through_label`
+  would hold for a parser without the pointer limit too,
+  since the 255 byte budget also ends that cycle. That
+  the pointer count runs on across labels is stated on
+  its own input, `Dns.Spec.rejects_seventeen_hops_through_labels`,
+  where the budget leaves the name alone; the comments in
+  `Dns/Parse.lean` and `SPEC.md` say which rule ends each
+  loop, as a reading of the code, not as a theorem.
+- A byte for byte round trip on compressed input. A
+  parsed message prints uncompressed, so its printed form
+  need not equal a compressed input. No such claim is
+  made.
+- Anything inside record data. Record data is opaque bytes
+  at this layer; names that appear inside it, in record
+  types that carry them, are not read or expanded.
+- Writing compressed names. The printer writes every name
+  in full.
+- Text form names. This layer works on wire bytes only; the
+  dotted form is neither read nor printed.
+- Reading requests and printing answers in `Main.lean`:
+  splitting lines, the decimal parser, the summary text.
+  The tests cover them, malformed requests included. The
+  summary shows each header flag by name, so the tests
+  see the flags as read, not only as reprinted.
+- Speed. The code works on lists of bytes, which suits
+  proofs, not large data. Each pointer jump walks the
+  message, and one name follows at most 16 pointers, so a
+  name costs at most 17 walks of the message; no theorem
+  states a cost.
+
+## What you must trust
+
+- The Lean kernel (Lean 4.35.0, pinned in
+  `lean-toolchain`), which checks every proof.
+- The Lean compiler, with the C compiler and linker
+  shipped with it, which turns the proved definitions into
+  the program that runs.
+- The Lean runtime, which runs that program.
+- The hardware the program runs on.
+- Every dependency in `lake-manifest.json`: the manifest
+  lists no packages, so there are no library dependencies
+  to trust beyond the Lean toolchain itself.
+- Lean's core library, including the compiled code it puts
+  in place of some definitions the proofs reason about.
+- The operating system the program runs on.
+- That `SPEC.md` states the reading of RFC 1035 you
+  intend. The proofs are about the parser and printer in
+  this repo following each other exactly; the fidelity of
+  the spec to the RFC is a reading, pinned in `SPEC.md`
+  where the RFC leaves a choice open.
+- The strict Python oracle in `tests/run_tests.py`,
+  written from `SPEC.md`, and the Python dnspython module
+  in the judges it runs when the module is present. Both
+  are evidence, not proof. The results file names the
+  dnspython version that judged the run, or says that
+  none did, and lists the named differences from it: the
+  Z bit, a pointer into the name being read, and a TTL
+  with its top bit set.
+- The line handling in `Main.lean` (splitting a request
+  line, reading decimal codes, the summary text). The
+  tests drive it, and no proof covers it.
+- There are no exceptions to item 4 of the bar: the
+  project uses none of the features it forbids.
 
 ## Re-check it
 
-```
-lake build
-python3 tests/run_tests.py
-```
-
-The test run rebuilds the tool, runs the fixed cases and the
-differential run, and rewrites `tests/TEST-RESULTS.md`. The
-numbers in that file are the record of the run described
-there.
+1. `lake comparator --paranoid`: builds the challenge
+   file `Dns/Spec.lean` and the proofs in a sandbox and
+   checks that each theorem named in `comparator.json`
+   proves exactly the statement in the challenge file,
+   uses no axiom but the three standard ones, and is
+   accepted by Lean's kernel and every other kernel
+   shipped with Lean.
+2. `python3 tests/run_tests.py`: the fixed cases, the
+   differential against the harness oracle, the mutation
+   and whole message runs, the compression runs and the
+   mutations at each pointer, and the rejection and
+   malformed cases, with counts and any
+   failures written to `tests/TEST-RESULTS.md`. When
+   dnspython can be imported, its name reader judges the
+   tool's `parse` answer for every input, and its message
+   reader the tool's `sections` answer for each fixed
+   case, and the results file lists the named
+   differences; it says so when dnspython is absent.
+3. `lake build`: the library, the proofs, and the tool
+   build clean, and `lake env lean Dns/Proofs/Verify.lean`
+   prints the axiom list for the headline round trip
+   theorem.
+4. `python3 tests/planted_bugs.py`: each planted bug,
+   with the statements it makes false and the test
+   failures it causes, written to
+   `tests/PLANTED-BUGS.md`.
+5. Read `SPEC.md` against RFC 1035 and check the pinned
+   readings are the ones you want.

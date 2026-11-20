@@ -1,43 +1,99 @@
 #!/usr/bin/env python3
 """Tests for the Lean DNS wire format parser and printer.
 
-Three parts.
+Slice 1 sections, kept and re-run:
 
 1. Fixed cases built by hand from RFC 1035: the name example of
-   section 3.1 in plain and pointer form, a two label query, a
-   root name question, the longest legal label, a name at the
-   255 byte wire bound and one past it, a response header, an
-   empty question list, and the rejection shapes (a reserved
-   bit set, a nonzero answer count, a short header, a label
-   byte of 64, bytes after the last question, a count that does
-   not match the bytes, a label cut short).
+   section 3.1 in plain form and in a pointer shape that loops,
+   a two label query, a root name question, the longest legal
+   label, a name at the 255 byte wire bound and one past it, a
+   response header, an empty question list, the AD and CD
+   header bits (RFC 4035 section 3.2) set alone and in the
+   RD+AD, RD+CD and RA+AD shapes resolvers send, which are
+   read, and the rejection shapes (the Z bit set, a short
+   header, a label byte of 64, bytes after the last question,
+   a count that does not match the bytes, a label cut short).
+   Each runs through both `parse` and `sections`; the summary
+   that `sections` answers shows each header flag by name.
+   Slice 1 turned a nonzero answer count away; slice 2 reads
+   records, so that case moved to the whole message sections
+   below.
 
-   When the Python dnspython module is present, the accepted
-   fixed messages are also read with it and the fields are
-   compared. When it is absent, the run says so on the record
-   and the strict oracle below carries the run.
+2. A differential run against the strict Python oracle in this
+   harness: random well formed question-only messages;
+   truncations of one message at every length; a single byte
+   flip at every position; targeted mutations.
 
-2. A differential run against a strict Python oracle written in
-   this harness from the plan rules in SPEC.md: random well
-   formed messages, which the Lean tool must accept and reprint
-   byte for byte; truncations of one message at every length;
-   a single byte flip at every position of one message; and
-   targeted mutations (a pointer in a name, a label byte of 64,
-   a reserved bit, the question count off by one in each
-   direction, a nonzero answer count).
+Slice 2 sections:
 
-3. Malformed request lines must be answered `error`.
+3. Whole message fixed cases: the RFC 1035 section 4.1.4
+   example placed in a real message (the first name at offset
+   12, the second name a label plus a pointer back to offset
+   12), an answer record whose name is a bare pointer to the
+   question name, a pointer chain of length two, a pointer
+   into the middle of a label, a pointer into the name being
+   read, a name that follows 16 pointers (the limit), the
+   same with a label between each two pointers, and records
+   in the authority and additional sections. Checked through both
+   the `parse` operation (the canonical reprint, names
+   expanded) and the `sections` operation (the summary text).
+
+4. Whole message rejections: a pointer to itself, a forward
+   pointer, a pointer past the end, a pointer onto a reserved
+   length form inside a label, a cycle that passes through a label (ended by
+   the 16 pointer limit) and one through a 63 byte label
+   (ended by the 255 byte budget), a reserved length form in
+   a record name, a data length running past the end, an
+   expanded name over 255 bytes reached by chaining, a name
+   that follows 17 pointers, the same with a label between
+   each two pointers, and a 65,523 byte message whose 4,095
+   answer names each point into an 8,180 pointer chain.
+
+5. Random whole messages (mixed sections), printed and read
+   back, and the same messages run through a harness
+   compressor that replaces repeated name suffixes with
+   pointers (every second message may also point at an
+   earlier root zero byte): the compressed bytes must read to
+   the same message. Names are drawn from a small alphabet
+   with shared tails, so most messages share suffixes; the
+   results file counts the compressed messages that hold a
+   pointer, and the inputs whose reading follows one.
+
+6. Mutations of the compressed messages at each pointer:
+   retargeted at itself, two bytes on, a random earlier and a
+   random later offset, and past the end; cut short inside
+   the pointer; and turned into each reserved form.
+
+When the Python dnspython module is present, two dnspython
+judges also run, counted apart from the inputs above so that a
+run with or without the module records the same Inputs:
+
+- the name judge reads every `parse` input with dnspython's own
+  wire parser and name reader (`dns.wirebase.Parser`,
+  `dns.name.from_wire_parser`), in the message layout of RFC
+  1035 section 4.1 written here, with record data held opaque,
+  and compares that reading with the tool's `parse` answer;
+- the message judge reads the fixed cases, accepted and refused,
+  with `dns.message.from_wire`, which also reads record data by
+  type, and compares that reading with the tool's `sections`
+  answer, read back from the summary text.
+
+Where a judge and the tool disagree, the difference must be
+explained by a named rule: the strict oracle with that rule
+changed to dnspython's must give dnspython's answer. The named
+differences are counted in the results file; any other
+disagreement is a failure. When the module is absent, the
+results file says so and the strict oracle carries the run.
 
     python3 tests/run_tests.py [--seed N] [--count N]
 
-The tool is driven one batch process per chunk of requests,
-input written and closed, output drained until the process
-exits. It builds the executable first, writes
-tests/TEST-RESULTS.md, and exits non-zero if any check fails.
-It needs Python 3.11 or later.
+The tool is driven one batch process per chunk of requests.
+It builds the executable first, writes tests/TEST-RESULTS.md,
+and exits non-zero if any check fails. It needs Python 3.11+.
 """
 
 import argparse
+import platform
 import random
 import subprocess
 import sys
@@ -54,35 +110,37 @@ CHUNK = 200
 SEED_DEFAULT = 20261026
 
 try:
+    import dns.exception
     import dns.message
     import dns.name
-    import dns.rdataclass
-    import dns.rdatatype
+    import dns.version
+    import dns.wirebase
 
-    DNSPYTHON = True
+    DNSPYTHON = dns.version.version
 except ImportError:
-    DNSPYTHON = False
+    DNSPYTHON = None
 
 
 def codes(data):
     return ",".join(str(b) for b in data)
 
 
-def request(data):
-    return "parse " + codes(data)
+def request(op, data):
+    return op + " " + codes(data)
 
 
 def run_tool(lines, timeout=TIMEOUT):
     """Run the tool on a batch of request lines.
 
     Returns (answers, problem). No right answer is longer than
-    its request plus a small constant, so output past twice the
-    input plus 64 bytes a line is stopped, not read until memory
-    runs out.
+    its request plus a small constant, except a `sections`
+    answer for a message of arbitrary byte labels, whose text
+    can reach about twelve times the message length; the cap
+    leaves room for that.
     """
     data = "".join(line + "\n" for line in lines)
     raw = data.encode("utf-8")
-    limit = 2 * len(raw) + 64 * (len(lines) + 1)
+    limit = 16 * len(raw) + 64 * (len(lines) + 1)
     try:
         proc = subprocess.Popen(
             [str(EXE)],
@@ -157,16 +215,23 @@ def ask_all(lines):
 
 
 # ---------------------------------------------------------------- the
-# builders and the strict oracle, written from the plan rules.
+# builders, the model, and the strict oracle.
 
 
 def be16(n):
     return bytes([n // 256, n % 256])
 
 
-def header_bytes(mid, qr, opcode, aa, tc, rd, ra, rcode, qd, an=0, ns=0, ar=0):
+def be32(n):
+    return bytes([(n >> 24) % 256, (n >> 16) % 256, (n >> 8) % 256, n % 256])
+
+
+def header_bytes(mid, qr, opcode, aa, tc, rd, ra, rcode, qd, an=0, ns=0, ar=0,
+                 ad=0, cd=0):
+    # The fourth byte, RFC 6895 section 2: RA, Z (always written
+    # as zero here), AD, CD, then the RCODE.
     f1 = qr * 128 + opcode * 8 + aa * 4 + tc * 2 + rd
-    f2 = ra * 128 + rcode
+    f2 = ra * 128 + ad * 32 + cd * 16 + rcode
     return (
         be16(mid) + bytes([f1, f2]) + be16(qd) + be16(an) + be16(ns) + be16(ar)
     )
@@ -185,75 +250,256 @@ def question_bytes(labels, qtype, qclass):
     return name_bytes(labels) + be16(qtype) + be16(qclass)
 
 
-def message_bytes(mid, flags, questions):
-    qr, opcode, aa, tc, rd, ra, rcode = flags
-    return header_bytes(mid, qr, opcode, aa, tc, rd, ra, rcode, len(questions)) + b"".join(
-        question_bytes(*q) for q in questions
+def record_bytes(labels, rtype, rclass, ttl, data):
+    return (
+        name_bytes(labels)
+        + be16(rtype)
+        + be16(rclass)
+        + be32(ttl)
+        + be16(len(data))
+        + bytes(data)
     )
 
 
-def oracle_parse(data):
+def model_header(model):
+    """The header bytes of a model. Its flags are the tuple
+    (qr, opcode, aa, tc, rd, ra, rcode, ad, cd)."""
+    qr, opcode, aa, tc, rd, ra, rcode, ad, cd = model["flags"]
+    return header_bytes(
+        model["id"], qr, opcode, aa, tc, rd, ra, rcode,
+        len(model["questions"]), len(model["answers"]),
+        len(model["authorities"]), len(model["additionals"]),
+        ad=ad, cd=cd,
+    )
+
+
+def model_bytes(model):
+    out = model_header(model)
+    for q in model["questions"]:
+        out += question_bytes(*q)
+    for section in ("answers", "authorities", "additionals"):
+        for r in model[section]:
+            out += record_bytes(*r)
+    return out
+
+
+def summary(model):
+    """The summary text, mirroring SPEC.md and Main.lean."""
+
+    def name_s(labels):
+        if not labels:
+            return "ROOT"
+        return ".".join(
+            "-".join(str(b) for b in lab) for lab in labels
+        )
+
+    def q_s(q):
+        return f"{name_s(q[0])}/{q[1]}/{q[2]}"
+
+    def r_s(r):
+        return (
+            f"{name_s(r[0])}/{r[1]}/{r[2]}/{r[3]}/"
+            + ",".join(str(b) for b in r[4])
+        )
+
+    qr, opcode, aa, tc, rd, ra, rcode, ad, cd = model["flags"]
+    return (
+        f"id={model['id']}"
+        f";qr={qr};opcode={opcode};aa={aa};tc={tc};rd={rd};ra={ra}"
+        f";ad={ad};cd={cd};rcode={rcode}"
+        f";qd={len(model['questions'])}"
+        f";an={len(model['answers'])}"
+        f";ns={len(model['authorities'])}"
+        f";ar={len(model['additionals'])}"
+        f";q={'|'.join(q_s(q) for q in model['questions'])}"
+        f";a={'|'.join(r_s(r) for r in model['answers'])}"
+        f";s={'|'.join(r_s(r) for r in model['authorities'])}"
+        f";t={'|'.join(r_s(r) for r in model['additionals'])}"
+    )
+
+
+MAX_HOPS = 16
+
+
+# The rules where dnspython reads differently, each a change the
+# strict oracle can make to its own reading. A disagreement with
+# dnspython is named when the oracle, with some of these changed,
+# gives dnspython's answer.
+NAMED_RULES = {
+    "z-bit": "dnspython keeps the Z bit (0x40 of the fourth byte);"
+    " this parser refuses a message with Z set, the one reserved"
+    " flag bit (SPEC.md, The header)",
+    "pointer-segment": "dnspython follows a pointer only when its target"
+    " lies before the start of the name part that holds the pointer"
+    " (the name's start, or the previous target), and reads nothing"
+    " at or after that start; this parser asks only that the target"
+    " lie before the pointer, so it reads a pointer into the name"
+    " being read (SPEC.md, Names and compression)",
+    "ttl-top-bit": "dnspython's message reader reads a TTL with its top"
+    " bit set as 0, as RFC 2181 section 8 asks of a TTL above 2^31 - 1;"
+    " this layer holds the four byte TTL field as read and gives it no"
+    " meaning (SPEC.md, Records)",
+}
+
+
+def read_name(data, pos, stats=None, rules=frozenset()):
+    """Read a name at pos by the plan rules. Returns
+    (labels, position after the name at the place it was read),
+    or None. At most MAX_HOPS pointers are followed. The step
+    cap mirrors the Lean fuel, which no reading reaches. When
+    `stats` is a dict, each pointer followed adds one to
+    stats["hops"]. With "pointer-segment" in `rules`, pointers
+    follow dnspython's rule instead (see NAMED_RULES)."""
+    labels = []
+    budget = 255
+    hops = 0
+    nextpos = None
+    cur = pos
+    steps = 0
+    # For the pointer-segment rule: the start of the name part
+    # being read, and the end of the bytes it may read.
+    seg_start = pos
+    end = len(data)
+    while True:
+        steps += 1
+        if steps > 256:
+            return None
+        if cur >= end:
+            return None
+        b = data[cur]
+        if b == 0:
+            if budget < 1:
+                return None
+            budget -= 1
+            if nextpos is None:
+                nextpos = cur + 1
+            return labels, nextpos
+        if b <= 63:
+            if b + 1 > budget:
+                return None
+            budget -= b + 1
+            if cur + 1 + b > end:
+                return None
+            labels.append(bytes(data[cur + 1 : cur + 1 + b]))
+            cur = cur + 1 + b
+            continue
+        if b >= 192:
+            if cur + 1 >= end:
+                return None
+            target = (b - 192) * 256 + data[cur + 1]
+            if not (target < cur and target < len(data)):
+                return None
+            if "pointer-segment" in rules:
+                if target >= seg_start:
+                    return None
+                end, seg_start = seg_start, target
+            hops += 1
+            if hops > MAX_HOPS:
+                return None
+            if stats is not None:
+                stats["hops"] = stats.get("hops", 0) + 1
+            if nextpos is None:
+                nextpos = cur + 2
+            cur = target
+            continue
+        return None
+
+
+def oracle_parse(data, stats=None, rules=frozenset()):
     """The strict reading of the plan rules, as a parse into a
-    structure and a reprint from the structure. The reprinted
-    bytes, or None when the message is rejected."""
+    model, or None when the message is rejected. `stats` is
+    passed to read_name. `rules` names rules to read as
+    dnspython does (see NAMED_RULES); empty, it is the strict
+    reading the tool must match."""
     if len(data) < 12:
         return None
     mid = data[0] * 256 + data[1]
     f1, f2 = data[2], data[3]
-    qr = f1 // 128
-    opcode = (f1 // 8) % 16
-    aa = (f1 // 4) % 2
-    tc = (f1 // 2) % 2
-    rd = f1 % 2
-    ra = f2 // 128
-    z = (f2 // 16) % 8
-    rcode = f2 % 16
+    flags = (
+        f1 // 128,
+        (f1 // 8) % 16,
+        (f1 // 4) % 2,
+        (f1 // 2) % 2,
+        f1 % 2,
+        f2 // 128,
+        f2 % 16,
+        (f2 // 32) % 2,
+        (f2 // 16) % 2,
+    )
+    # Z (0x40) is the one reserved bit; AD and CD are read.
+    if (f2 // 64) % 2 != 0 and "z-bit" not in rules:
+        return None
     qd = data[4] * 256 + data[5]
     an = data[6] * 256 + data[7]
     ns = data[8] * 256 + data[9]
     ar = data[10] * 256 + data[11]
-    if z != 0 or an != 0 or ns != 0 or ar != 0:
-        return None
     pos = 12
     questions = []
     for _ in range(qd):
-        labels = []
-        budget = 255
-        while True:
-            if pos >= len(data):
-                return None
-            ln = data[pos]
-            pos += 1
-            if ln == 0:
-                if budget < 1:
-                    return None
-                budget -= 1
-                break
-            if ln > 63:
-                return None
-            if ln + 1 > budget:
-                return None
-            budget -= ln + 1
-            if pos + ln > len(data):
-                return None
-            labels.append(bytes(data[pos : pos + ln]))
-            pos += ln
+        got = read_name(data, pos, stats, rules)
+        if got is None:
+            return None
+        labels, pos = got
         if pos + 4 > len(data):
             return None
-        qtype = data[pos] * 256 + data[pos + 1]
-        qclass = data[pos + 2] * 256 + data[pos + 3]
+        questions.append(
+            (labels, data[pos] * 256 + data[pos + 1],
+             data[pos + 2] * 256 + data[pos + 3])
+        )
         pos += 4
-        questions.append((labels, qtype, qclass))
+
+    def read_record(pos):
+        got = read_name(data, pos, stats, rules)
+        if got is None:
+            return None
+        labels, pos = got
+        if pos + 10 > len(data):
+            return None
+        rtype = data[pos] * 256 + data[pos + 1]
+        rclass = data[pos + 2] * 256 + data[pos + 3]
+        ttl = int.from_bytes(data[pos + 4 : pos + 8], "big")
+        if "ttl-top-bit" in rules and ttl > 0x7FFFFFFF:
+            ttl = 0
+        rdlen = data[pos + 8] * 256 + data[pos + 9]
+        pos += 10
+        if pos + rdlen > len(data):
+            return None
+        rdata = bytes(data[pos : pos + rdlen])
+        return (labels, rtype, rclass, ttl, rdata), pos + rdlen
+
+    sections = {}
+    for key, count in (("answers", an), ("authorities", ns),
+                       ("additionals", ar)):
+        records = []
+        for _ in range(count):
+            got = read_record(pos)
+            if got is None:
+                return None
+            record, pos = got
+            records.append(record)
+        sections[key] = records
     if pos != len(data):
         return None
-    return message_bytes(mid, (qr, opcode, aa, tc, rd, ra, rcode), questions)
+    return {
+        "id": mid,
+        "flags": flags,
+        "questions": questions,
+        **sections,
+    }
 
 
-def expected(data):
-    got = oracle_parse(data)
-    if got is None:
+def expected_parse(data):
+    model = oracle_parse(data)
+    if model is None:
         return "none"
-    return "ok:" + codes(got)
+    return "ok:" + codes(model_bytes(model))
+
+
+def expected_sections(data):
+    model = oracle_parse(data)
+    if model is None:
+        return "none"
+    return "ok:" + codes(summary(model).encode("ascii"))
 
 
 # ---------------------------------------------------------------- checks
@@ -264,14 +510,20 @@ class Tally:
         self.inputs = 0
         self.agreements = 0
         self.failures = []
+        # (message bytes, operation, answer) for each input, for
+        # the pointer counts and the dnspython judges.
+        self.seen = []
 
-    def check(self, data, answer, label):
+    def check(self, data, answer, label, op="parse"):
         self.inputs += 1
-        want = expected(data)
+        self.seen.append((data, op, answer))
+        want = expected_parse(data) if op == "parse" else expected_sections(data)
         if answer == want:
             self.agreements += 1
         else:
-            self.failures.append(f"{label}: want {want[:80]}, got {str(answer)[:80]}")
+            self.failures.append(
+                f"{label}: want {want[:100]}, got {str(answer)[:100]}"
+            )
 
     def check_line(self, line, answer, want, label):
         self.inputs += 1
@@ -281,62 +533,88 @@ class Tally:
             self.failures.append(f"{label}: want {want}, got {answer}")
 
 
-QUERY = (0, 0, 0, 0, 1, 0, 0)  # qr opcode aa tc rd ra rcode
+QUERY = (0, 0, 0, 0, 1, 0, 0, 0, 0)  # qr opcode aa tc rd ra rcode ad cd
+RESPONSE = (1, 0, 1, 0, 0, 1, 0, 0, 0)
+
+
+def qmodel(mid, flags, questions):
+    return {
+        "id": mid, "flags": flags, "questions": questions,
+        "answers": [], "authorities": [], "additionals": [],
+    }
+
+
+# ------------------------------------------------------- slice 1 sections
 
 
 def fixed_cases():
     isi = [b"F", b"ISI", b"ARPA"]
     cases = []
     # RFC 1035 section 3.1 name, plain form, in a query.
-    cases.append(("rfc-name", message_bytes(0x1234, QUERY, [(isi, 1, 1)])))
-    # The same name with a compression pointer after the first
-    # two labels: the pointer form is turned away in this slice.
+    cases.append(("rfc-name", model_bytes(qmodel(0x1234, QUERY, [(isi, 1, 1)]))))
+    # The same start with a compression pointer after the first
+    # two labels, pointing back at the name's own start: reading
+    # it loops through F and ISI. Each pass spends 6 bytes of
+    # the 255 byte budget, so the budget alone would end it on
+    # the 43rd pass; the 16 pointer limit ends it first, at the
+    # 17th pointer. The step bound is never reached.
     pointed = (
         header_bytes(0x1234, 0, 0, 0, 0, 1, 0, 0, 1)
         + bytes([1]) + b"F" + bytes([3]) + b"ISI" + bytes([0xC0, 0x0C])
         + be16(1) + be16(1)
     )
-    cases.append(("rfc-name-pointer", pointed))
+    cases.append(("rfc-name-pointer-loop", pointed))
     # A two label query.
     cases.append(
-        ("two-label", message_bytes(7, QUERY, [([b"example", b"com"], 1, 1)]))
+        ("two-label", model_bytes(qmodel(7, QUERY, [([b"example", b"com"], 1, 1)])))
     )
     # A root name question.
-    cases.append(("root", message_bytes(7, QUERY, [([], 1, 1)])))
+    cases.append(("root", model_bytes(qmodel(7, QUERY, [([], 1, 1)]))))
     # The longest legal label.
-    cases.append(("long-label", message_bytes(7, QUERY, [([b"a" * 63], 1, 1)])))
+    cases.append(("long-label", model_bytes(qmodel(7, QUERY, [([b"a" * 63], 1, 1)]))))
     # A name at the 255 byte wire bound: 63, 63, 63, 61.
     bound = [b"a" * 63, b"b" * 63, b"c" * 63, b"d" * 61]
-    cases.append(("name-at-bound", message_bytes(7, QUERY, [(bound, 1, 1)])))
+    cases.append(("name-at-bound", model_bytes(qmodel(7, QUERY, [(bound, 1, 1)]))))
     # The same shape one byte past the bound.
     over = [b"a" * 63, b"b" * 63, b"c" * 63, b"d" * 62]
-    cases.append(("name-over-bound", message_bytes(7, QUERY, [(over, 1, 1)])))
+    cases.append(("name-over-bound", model_bytes(qmodel(7, QUERY, [(over, 1, 1)]))))
     # A response header with one question.
     cases.append(
-        ("response", message_bytes(9, (1, 0, 0, 0, 0, 1, 0), [([b"x"], 1, 1)]))
+        ("response", model_bytes(qmodel(9, (1, 0, 0, 0, 0, 1, 0, 0, 0), [([b"x"], 1, 1)])))
     )
     # No questions at all.
-    cases.append(("no-questions", message_bytes(9, QUERY, [])))
-    # A reserved flag bit set (byte 3, a middle reserved bit).
-    bad = bytearray(message_bytes(7, QUERY, [([b"x"], 1, 1)]))
-    bad[3] |= 0x20
-    cases.append(("reserved-bit", bytes(bad)))
-    # A nonzero answer count.
-    bad = bytearray(message_bytes(7, QUERY, [([b"x"], 1, 1)]))
-    bad[7] = 1
-    cases.append(("answer-count", bytes(bad)))
+    cases.append(("no-questions", model_bytes(qmodel(9, QUERY, []))))
+    # The AD bit (0x20 of byte 3) and the CD bit (0x10), RFC 4035
+    # section 3.2, each set alone: read into the header.
+    for label, bit in (("ad-bit", 0x20), ("cd-bit", 0x10)):
+        data = bytearray(model_bytes(qmodel(7, (0, 0, 0, 0, 0, 0, 0, 0, 0), [([b"x"], 1, 1)])))
+        data[3] |= bit
+        cases.append((label, bytes(data)))
+    # The flag bytes resolvers send: an RD+AD query (01 20, as
+    # dig sends by default, RFC 6840 section 5.7), an RD+CD query
+    # (01 10), and a validating resolver's RA+AD response (81 a0).
+    for label, f1, f2 in (("rd-ad-query", 0x01, 0x20),
+                          ("rd-cd-query", 0x01, 0x10),
+                          ("ra-ad-response", 0x81, 0xA0)):
+        data = bytearray(model_bytes(qmodel(7, QUERY, [([b"example", b"com"], 1, 1)])))
+        data[2], data[3] = f1, f2
+        cases.append((label, bytes(data)))
+    # The Z bit (0x40 of byte 3), the one reserved flag bit:
+    # turned away.
+    bad = bytearray(model_bytes(qmodel(7, QUERY, [([b"x"], 1, 1)])))
+    bad[3] |= 0x40
+    cases.append(("z-bit", bytes(bad)))
     # A truncated header.
-    cases.append(("short-header", message_bytes(7, QUERY, [([b"x"], 1, 1)])[:11]))
+    cases.append(("short-header", model_bytes(qmodel(7, QUERY, [([b"x"], 1, 1)]))[:11]))
     # A label length byte of 64, a reserved form.
     bad = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + bytes([64]) + b"a" * 64 + bytes([0]) + be16(1) + be16(1)
     cases.append(("label-64", bad))
     # A byte after the last question.
-    cases.append(("leftover", message_bytes(7, QUERY, [([b"x"], 1, 1)]) + b"\x00"))
+    cases.append(("leftover", model_bytes(qmodel(7, QUERY, [([b"x"], 1, 1)])) + b"\x00"))
     # A label cut short by the end of the input.
     bad = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + bytes([10]) + b"abc"
     cases.append(("label-cut", bad))
-    # Two questions promised, one given: covered again in the
-    # mutations; here as a fixed case too.
+    # Two questions promised, one given.
     one = question_bytes([b"x"], 1, 1)
     cases.append(
         ("count-high", header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2) + one)
@@ -344,47 +622,36 @@ def fixed_cases():
     return cases
 
 
-def dnspython_crosschecks():
-    """Read the accepted fixed messages with dnspython, when it
-    is present. Returns (checks, failures)."""
-    checks = 0
-    failures = []
-    if not DNSPYTHON:
-        return checks, failures
-    for label, data in fixed_cases():
-        if oracle_parse(data) is None:
-            continue
-        checks += 1
-        try:
-            msg = dns.message.from_wire(data)
-            if msg.id != data[0] * 256 + data[1]:
-                failures.append(f"{label}: dnspython read a different id")
-            if len(msg.question) != data[4] * 256 + data[5]:
-                failures.append(f"{label}: dnspython read a different count")
-            if msg.question:
-                want_labels = []
-                q = oracle_question_labels(data)
-                got = [bytes(l) for l in msg.question[0].name.labels[:-1]]
-                if got != q:
-                    failures.append(f"{label}: dnspython read different labels")
-        except Exception as e:  # dnspython refused or stumbled
-            failures.append(f"{label}: dnspython raised {type(e).__name__}")
-    return checks, failures
+def run_fixed():
+    tally = Tally()
+    cases = fixed_cases()
+    answers, problems = ask_all([request("parse", d) for _, d in cases])
+    tally.failures += problems
+    for (label, data), answer in zip(cases, answers):
+        tally.check(data, answer, f"fixed {label}")
+    # Requests with no codes: an empty message, which is rejected.
+    answers, problems = ask_all(["parse ", "parse"])
+    tally.failures += problems
+    for line, answer in zip(["parse ", "parse"], answers):
+        tally.check_line(line, answer, "none", "no codes")
+    return tally
 
 
-def oracle_question_labels(data):
-    """The labels of the first question, by the harness oracle's
-    own reading. Used only for the dnspython cross check."""
-    pos = 12
-    labels = []
-    while data[pos] != 0:
-        ln = data[pos]
-        labels.append(bytes(data[pos + 1 : pos + 1 + ln]))
-        pos += 1 + ln
-    return labels
+def run_fixed_sections():
+    """The slice 1 fixed cases through the `sections` operation,
+    whose summary shows each header flag by name. The `parse`
+    answer reprints the flags in their bit places, so it would
+    not show a reader and printer that both moved a flag."""
+    tally = Tally()
+    cases = fixed_cases()
+    answers, problems = ask_all([request("sections", d) for _, d in cases])
+    tally.failures += problems
+    for (label, data), answer in zip(cases, answers):
+        tally.check(data, answer, f"fixed {label}", op="sections")
+    return tally
 
 
-def random_message(rng):
+def random_question_message(rng):
     def label():
         n = rng.randint(1, 63)
         return bytes(rng.randrange(256) for _ in range(n))
@@ -408,34 +675,21 @@ def random_message(rng):
         rng.randint(0, 1),
         rng.randint(0, 1),
         rng.randint(0, 15),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
     )
     questions = [
         (name(), rng.randint(0, 65535), rng.randint(0, 65535))
         for _ in range(rng.randint(0, 3))
     ]
-    return message_bytes(rng.randint(0, 65535), flags, questions)
-
-
-def run_fixed():
-    tally = Tally()
-    cases = fixed_cases()
-    answers, problems = ask_all([request(d) for _, d in cases])
-    tally.failures += problems
-    for (label, data), answer in zip(cases, answers):
-        tally.check(data, answer, f"fixed {label}")
-    # Requests with no codes: an empty message, which is rejected.
-    answers, problems = ask_all(["parse ", "parse"])
-    tally.failures += problems
-    for line, answer in zip(["parse ", "parse"], answers):
-        tally.check_line(line, answer, "none", "no codes")
-    return tally
+    return model_bytes(qmodel(rng.randint(0, 65535), flags, questions))
 
 
 def run_random(seed, count):
     tally = Tally()
     rng = random.Random(seed)
-    docs = [random_message(rng) for _ in range(count)]
-    answers, problems = ask_all([request(d) for d in docs])
+    docs = [random_question_message(rng) for _ in range(count)]
+    answers, problems = ask_all([request("parse", d) for d in docs])
     tally.failures += problems
     for i, (data, answer) in enumerate(zip(docs, answers)):
         tally.check(data, answer, f"random {i}")
@@ -444,7 +698,7 @@ def run_random(seed, count):
 
 def run_mutations():
     tally = Tally()
-    base = message_bytes(42, QUERY, [([b"example", b"com"], 1, 1)])
+    base = model_bytes(qmodel(42, QUERY, [([b"example", b"com"], 1, 1)]))
     inputs = []
     labels = []
     for n in range(len(base)):
@@ -455,7 +709,6 @@ def run_mutations():
         flips[i] ^= 0xFF
         inputs.append(bytes(flips))
         labels.append(f"flip {i}")
-    # Targeted mutations from the plan.
     targeted = []
     pointed = bytearray(base)
     pointed[12] = 0xC0
@@ -463,9 +716,10 @@ def run_mutations():
     lab64 = bytearray(base)
     lab64[12] = 64
     targeted.append(("label-64", bytes(lab64)))
-    res = bytearray(base)
-    res[3] |= 0x10
-    targeted.append(("reserved", bytes(res)))
+    for label, bit in (("z", 0x40), ("ad", 0x20), ("cd", 0x10)):
+        res = bytearray(base)
+        res[3] |= bit
+        targeted.append((label, bytes(res)))
     low = bytearray(base)
     low[5] = 0
     targeted.append(("count-low", bytes(low)))
@@ -479,11 +733,795 @@ def run_mutations():
     for label, data in targeted:
         inputs.append(data)
         labels.append(f"targeted {label}")
-    answers, problems = ask_all([request(d) for d in inputs])
+    answers, problems = ask_all([request("parse", d) for d in inputs])
     tally.failures += problems
     for label, data, answer in zip(labels, inputs, answers):
         tally.check(data, answer, f"mutation {label}")
     return tally
+
+
+# ------------------------------------------------------- slice 2 sections
+
+
+def pointer(target):
+    return bytes([0xC0 | (target // 256), target % 256])
+
+
+PRIVATE_TYPE = 65280
+
+
+def hop_chain(hops):
+    """A response whose second answer name follows `hops`
+    pointers. The question name is the label a at offset 12.
+    The first answer's name is a pointer to it, and its data
+    holds hops - 1 pointers, each to the one before, the first
+    to offset 12. The second answer's name is a pointer to the
+    last of them. Both records have type 65280, one of the
+    private use types (RFC 6895 section 3.1), whose data every
+    reader holds opaque."""
+    k = hops - 1
+    wire = header_bytes(7, 1, 0, 0, 0, 0, 0, 0, 1, an=2)
+    wire += question_bytes([b"a"], 1, 1)
+    wire += pointer(12) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(2 * k)
+    start = len(wire)
+    chain = b""
+    for i in range(k):
+        chain += pointer(12 if i == 0 else start + 2 * (i - 1))
+    wire += chain
+    wire += pointer(start + 2 * (k - 1)) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(0)
+    return wire
+
+
+def label_hop_chain(hops):
+    """A query of hops + 1 questions whose last name follows
+    `hops` pointers with a label between each two. The first
+    question's name is the label a at offset 12. Each later
+    question's name is one label (b, c, and so on) and a
+    pointer to the name of the question before."""
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, hops + 1)
+    prev = len(wire)
+    wire += question_bytes([b"a"], 1, 1)
+    for i in range(hops):
+        start = len(wire)
+        wire += bytes([1, 98 + i]) + pointer(prev) + be16(1) + be16(1)
+        prev = start
+    return wire
+
+
+def long_pointer_chain(links, names):
+    """A message whose first answer's data is a chain of
+    `links` pointers, each to the one before, the first to the
+    root name at offset 12, followed by `names` answers whose
+    names point at the last link. The records have type
+    65280, as in hop_chain."""
+    wire = header_bytes(7, 1, 0, 0, 0, 0, 0, 0, 0, an=1 + names)
+    wire += bytes([0]) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(2 * links)
+    start = len(wire)
+    for i in range(links):
+        wire += pointer(12 if i == 0 else start + 2 * (i - 1))
+    head = start + 2 * (links - 1)
+    for _ in range(names):
+        wire += pointer(head) + be16(PRIVATE_TYPE) + be16(1) + be32(0) + be16(0)
+    return wire
+
+
+def full_fixed_cases():
+    """Accepted whole messages, as (label, wire bytes, model).
+    The wire bytes are hand built; the model is what both
+    operations must report."""
+    cases = []
+
+    # RFC 1035 section 4.1.4, placed in a real message. The
+    # first name starts at offset 12, right after the header.
+    # The second name is the label FOO and a pointer back to
+    # offset 12, so it expands to FOO.F.ISI.ARPA.
+    isi = [b"F", b"ISI", b"ARPA"]
+    wire = header_bytes(0x1234, 0, 0, 0, 0, 1, 0, 0, 2)
+    wire += name_bytes(isi) + be16(1) + be16(1)
+    wire += bytes([3]) + b"FOO" + pointer(12) + be16(1) + be16(1)
+    model = qmodel(0x1234, QUERY, [(isi, 1, 1), ([b"FOO"] + isi, 1, 1)])
+    cases.append(("rfc-4.1.4", wire, model))
+
+    # A question and an answer whose name is a bare pointer
+    # back to the question name at offset 12.
+    name = [b"example", b"com"]
+    wire = header_bytes(0x2222, 1, 0, 1, 0, 0, 1, 0, 1, an=1)
+    wire += question_bytes(name, 1, 1)
+    wire += pointer(12) + be16(1) + be16(1) + be32(300) + be16(4) + bytes([1, 2, 3, 4])
+    model = qmodel(0x2222, RESPONSE, [(name, 1, 1)])
+    model["answers"] = [(name, 1, 1, 300, bytes([1, 2, 3, 4]))]
+    cases.append(("answer-pointer", wire, model))
+
+    # A pointer chain of length two: the third name points at
+    # the second, which points at the first.
+    wire = header_bytes(0x3333, 0, 0, 0, 0, 1, 0, 0, 3)
+    off1 = len(wire)
+    wire += question_bytes([b"a", b"b"], 1, 1)
+    off2 = len(wire)
+    wire += bytes([1]) + b"c" + pointer(off1) + be16(1) + be16(1)
+    wire += bytes([1]) + b"d" + pointer(off2) + be16(1) + be16(1)
+    model = qmodel(
+        0x3333, QUERY,
+        [([b"a", b"b"], 1, 1),
+         ([b"c", b"a", b"b"], 1, 1),
+         ([b"d", b"c", b"a", b"b"], 1, 1)],
+    )
+    cases.append(("pointer-chain", wire, model))
+
+    # A pointer into the middle of a label, landing on bytes
+    # that read as a name: no rule forbids it. The first name
+    # is the one label 61 01 78; the second is a pointer to
+    # offset 14, where 01 78 00 reads as the name x.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2)
+    wire += question_bytes([b"a\x01x"], 1, 1) + pointer(14) + be16(1) + be16(1)
+    assert wire.hex() == "000701000002000000000000036101780000010001c00e00010001"
+    model = qmodel(7, QUERY, [([b"a\x01x"], 1, 1), ([b"x"], 1, 1)])
+    cases.append(("pointer-mid-label", wire, model))
+
+    # A pointer into the name being read: the name at offset
+    # 12 is the label 01 78 00 and then a pointer to offset 13,
+    # inside that label, where 01 78 00 reads as x. The target
+    # is before the pointer, so it is read: the name is the two
+    # labels 01 78 00 and x. dnspython refuses it, since it asks
+    # each target to lie before the start of the name being
+    # read; the results file names that difference.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1)
+    wire += bytes([3, 1, 0x78, 0]) + pointer(13) + be16(1) + be16(1)
+    model = qmodel(7, QUERY, [([b"\x01x\x00", b"x"], 1, 1)])
+    cases.append(("pointer-into-own-name", wire, model))
+
+    # A name that follows exactly 16 pointers, the limit: read.
+    model = qmodel(7, (1, 0, 0, 0, 0, 0, 0, 0, 0), [([b"a"], 1, 1)])
+    chain = hop_chain(16)
+    model["answers"] = [
+        ([b"a"], PRIVATE_TYPE, 1, 0, chain[31:61]),
+        ([b"a"], PRIVATE_TYPE, 1, 0, b""),
+    ]
+    cases.append(("sixteen-hops", chain, model))
+
+    # A name that follows 16 pointers with a label between each
+    # two: read. The last of the 17 questions reads as q.p.o
+    # and on down to a.
+    names = [[bytes([97 + k]) for k in range(i, -1, -1)] for i in range(17)]
+    model = qmodel(7, QUERY, [(n, 1, 1) for n in names])
+    cases.append(("sixteen-hops-through-labels", label_hop_chain(16), model))
+
+    # Records in the authority and additional sections, built
+    # plainly by the model builder.
+    model = qmodel(0x4444, RESPONSE, [([b"example", b"com"], 1, 1)])
+    model["authorities"] = [
+        ([b"com"], 2, 1, 3600, bytes([1]) + b"n" + bytes([7]) + b"example" + bytes([3]) + b"com" + bytes([0]))
+    ]
+    model["additionals"] = [
+        ([b"n", b"example", b"com"], 1, 1, 60, bytes([127, 0, 0, 1])),
+        ([], 41, 1, 0, b""),
+    ]
+    cases.append(("authority-additional", model_bytes(model), model))
+
+    # An answer record whose name is written in full, next to a
+    # root name question. It is a TXT record (type 16), whose
+    # data RFC 1035 section 3.3.14 makes one or more
+    # character-strings, so its data is one empty
+    # character-string, the single byte 0, not empty.
+    model = qmodel(0x5555, RESPONSE, [([], 255, 255)])
+    model["answers"] = [([b"deep", b"a", b"b"], 16, 3, 4294967295, b"\x00")]
+    cases.append(("full-names", model_bytes(model), model))
+    return cases
+
+
+def run_full_fixed(op):
+    tally = Tally()
+    cases = full_fixed_cases()
+    answers, problems = ask_all([request(op, d) for _, d, _ in cases])
+    tally.failures += problems
+    for (label, data, model), answer in zip(cases, answers):
+        tally.inputs += 1
+        tally.seen.append((data, op, answer))
+        want = (
+            "ok:" + codes(model_bytes(model))
+            if op == "parse"
+            else "ok:" + codes(summary(model).encode("ascii"))
+        )
+        if answer == want:
+            tally.agreements += 1
+        else:
+            tally.failures.append(
+                f"full fixed {label} {op}: want {want[:100]}, got {str(answer)[:100]}"
+            )
+    return tally
+
+
+def rejection_cases():
+    cases = []
+
+    # A pointer to itself: the name at offset 12 is a pointer
+    # to offset 12, and the target must be strictly earlier.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + pointer(12) + be16(1) + be16(1)
+    cases.append(("pointer-self", wire))
+
+    # A forward pointer: two questions, the first named by a
+    # pointer to offset 18, where the second question's name
+    # sits. Every byte is counted and the target lies inside
+    # the message, so only the backwards rule refuses it; a
+    # reader that allowed forward pointers would read both
+    # names as later.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2) + pointer(18) + be16(1) + be16(1)
+    wire += question_bytes([b"later"], 1, 1)
+    assert wire.hex() == "000701000002000000000000c01200010001056c617465720000010001"
+    cases.append(("pointer-forward", wire))
+
+    # A pointer past the end of the message.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1) + pointer(1023) + be16(1) + be16(1)
+    cases.append(("pointer-past-end", wire))
+
+    # A pointer onto a reserved length form: the second name
+    # points at offset 14, the second byte of the label abc in
+    # the first name, which begins at offset 12. The byte
+    # there, b (0x62), has one top bit set, the reserved form,
+    # so reading at the target refuses it. Landing inside a
+    # label is not refused in itself: see the accepted case
+    # pointer-mid-label.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 2)
+    wire += question_bytes([b"abc"], 1, 1)
+    wire += pointer(14) + be16(1) + be16(1)
+    cases.append(("pointer-onto-reserved-form", wire))
+
+    # A reserved length form (one top bit set) in a record
+    # name.
+    wire = header_bytes(7, 1, 0, 0, 0, 0, 1, 0, 1, an=1)
+    wire += question_bytes([b"x"], 1, 1)
+    wire += bytes([0x40]) + b"a" * 64 + bytes([0])
+    wire += be16(1) + be16(1) + be32(0) + be16(0)
+    cases.append(("reserved-in-record", wire))
+
+    # A data length that runs past the end.
+    wire = header_bytes(7, 1, 0, 0, 0, 0, 1, 0, 1, an=1)
+    wire += question_bytes([b"x"], 1, 1)
+    wire += name_bytes([b"y"]) + be16(1) + be16(1) + be32(0) + be16(10) + b"abc"
+    cases.append(("data-past-end", wire))
+
+    # An expanded name over 255 bytes, reached by chaining:
+    # each name adds one 60 byte label and points at the name
+    # before it. The fifth expansion needs 306 wire bytes.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 5)
+    prev = None
+    for i in range(5):
+        lab = bytes([97 + i]) * 60
+        start = len(wire)
+        if prev is None:
+            wire += name_bytes([lab])
+        else:
+            wire += bytes([60]) + lab + pointer(prev)
+        wire += be16(1) + be16(1)
+        prev = start
+    cases.append(("chain-over-255", wire))
+
+    # A cycle that passes through a label, the reviewer's
+    # shape. The header bytes double as a name fragment: at
+    # offset 5 sit the bytes 04 61 62 63 64, the label abcd,
+    # and at offset 10 the pointer C0 05 back to offset 5.
+    # (Read as header fields those bytes give QDCOUNT 4 and
+    # large answer, authority, and additional counts, which
+    # do not matter: the first name read already fails.) The
+    # question name at offset 12 is a pointer to offset 5.
+    # Reading it walks label, pointer, label, pointer, and
+    # the strictly backwards rule alone does not stop that:
+    # the pointer at offset 10 does point back to offset 5.
+    # What turns it away is the 16 pointer limit: the 17th
+    # pointer is refused after 16 passes through the label,
+    # which spent 80 of the 255 budget bytes. (Without the
+    # limit, the budget would end it after 51 passes.) The
+    # oracle rejects it by the same rule, and both operations
+    # must answer none.
+    wire = header_bytes(0, 0, 0, 0, 0, 0, 0, 0, 4,
+                        an=0x6162, ns=0x6364, ar=0xC005)
+    wire += pointer(5) + be16(1) + be16(1)
+    cases.append(("pointer-cycle-through-label", wire))
+
+    # A cycle through a 63 byte label, which the budget ends
+    # before the pointer limit: the name at offset 12 is the
+    # label and a pointer back to offset 12. Each pass spends
+    # 64 bytes, so the fourth pass is turned away after 3
+    # pointers.
+    wire = header_bytes(7, 0, 0, 0, 0, 1, 0, 0, 1)
+    wire += bytes([63]) + b"a" * 63 + pointer(12) + be16(1) + be16(1)
+    cases.append(("pointer-cycle-budget", wire))
+
+    # A name that follows 17 pointers, one past the limit.
+    cases.append(("seventeen-hops", hop_chain(17)))
+
+    # A name that follows 17 pointers with a label between each
+    # two. The pointer count runs on across the labels, so the
+    # 17th pointer is refused; a count that started again at
+    # each label would read the name, whose expanded form takes
+    # only 37 of the 255 budget bytes. The cycle cases above
+    # cannot show that, since the budget refuses them too.
+    wire = label_hop_chain(17)
+    assert wire.hex() == (
+        "000701000012000000000000016100000100010162c00c000100010163c013"
+        "000100010164c01b000100010165c023000100010166c02b000100010167c0"
+        "33000100010168c03b000100010169c04300010001016ac04b00010001016b"
+        "c05300010001016cc05b00010001016dc06300010001016ec06b00010001016f"
+        "c073000100010170c07b000100010171c083000100010172c08b00010001"
+    )
+    cases.append(("seventeen-hops-through-labels", wire))
+
+    # A 65,523 byte message in the shape of the re-review's
+    # (whose own message was 65,524 bytes): one record's data
+    # holds a chain of 8,180 backward pointers, and 4,095
+    # answer names point at its head. Every rule but the
+    # pointer limit allows it; the first answer name is
+    # turned away at its 17th pointer.
+    cases.append(("long-pointer-chain", long_pointer_chain(8180, 4095)))
+    return cases
+
+
+def run_rejections():
+    tally = Tally()
+    cases = rejection_cases()
+    lines = []
+    for _, data in cases:
+        lines.append(request("parse", data))
+        lines.append(request("sections", data))
+    answers, problems = ask_all(lines)
+    tally.failures += problems
+    for (label, data), p_ans, s_ans in zip(
+        cases, answers[0::2], answers[1::2]
+    ):
+        for op, answer in (("parse", p_ans), ("sections", s_ans)):
+            tally.inputs += 1
+            tally.seen.append((data, op, answer))
+            if answer == "none":
+                tally.agreements += 1
+            else:
+                tally.failures.append(
+                    f"rejection {label} {op}: want none, got {str(answer)[:80]}"
+                )
+    return tally
+
+
+# Labels for the whole message generator. Names are drawn from a
+# small alphabet and end in one of a few shared tails, so that
+# names in one message share suffixes and the compressor below
+# has pointers to write. One label in seven is random bytes
+# instead, and one pool label is 63 bytes long.
+LABEL_POOL = [b"a", b"b", b"c", b"ns", b"www", b"mail", b"example",
+              b"com", b"org", b"x" * 63]
+TAILS = [[], [b"com"], [b"example", b"com"], [b"org"],
+         [b"example", b"org"], [b"b", b"c"]]
+
+
+def wire_len(labels):
+    return sum(len(lab) + 1 for lab in labels) + 1
+
+
+def random_model(rng):
+    def label():
+        if rng.randrange(7) == 0:
+            n = rng.randint(1, 24)
+            return bytes(rng.randrange(256) for _ in range(n))
+        return rng.choice(LABEL_POOL)
+
+    def name():
+        labels = [label() for _ in range(rng.randint(0, 2))]
+        labels += rng.choice(TAILS)
+        while wire_len(labels) > 255:
+            labels.pop(0)
+        return labels
+
+    def record():
+        return (
+            name(),
+            rng.randint(0, 65535),
+            rng.randint(0, 65535),
+            rng.randint(0, 4294967295),
+            bytes(rng.randrange(256) for _ in range(rng.randint(0, 20))),
+        )
+
+    flags = (
+        rng.randint(0, 1),
+        rng.randint(0, 15),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
+        rng.randint(0, 15),
+        rng.randint(0, 1),
+        rng.randint(0, 1),
+    )
+    return {
+        "id": rng.randint(0, 65535),
+        "flags": flags,
+        "questions": [
+            (name(), rng.randint(0, 65535), rng.randint(0, 65535))
+            for _ in range(rng.randint(0, 2))
+        ],
+        "answers": [record() for _ in range(rng.randint(0, 3))],
+        "authorities": [record() for _ in range(rng.randint(0, 2))],
+        "additionals": [record() for _ in range(rng.randint(0, 2))],
+    }
+
+
+def run_random_full(seed, count, op):
+    tally = Tally()
+    rng = random.Random(seed + 1)
+    models = [random_model(rng) for _ in range(count)]
+    docs = [model_bytes(m) for m in models]
+    answers, problems = ask_all([request(op, d) for d in docs])
+    tally.failures += problems
+    for i, (model, data, answer) in enumerate(zip(models, docs, answers)):
+        tally.inputs += 1
+        tally.seen.append((data, op, answer))
+        want = (
+            "ok:" + codes(data)
+            if op == "parse"
+            else "ok:" + codes(summary(model).encode("ascii"))
+        )
+        if answer == want:
+            tally.agreements += 1
+        else:
+            tally.failures.append(
+                f"random full {i} {op}: want {want[:100]}, got {str(answer)[:100]}"
+            )
+    return tally, models
+
+
+def compress_message(model, point_root=False):
+    """Write a model with name compression. Returns the bytes
+    and the offsets of the pointers written.
+
+    A dictionary maps each name suffix already written to the
+    offset where it starts. Each new name writes the labels
+    before its longest known suffix, then a pointer to that
+    suffix, or a zero byte when no suffix is known. The root
+    suffix counts as known only when `point_root` is set: then
+    a name may end in a pointer to an earlier zero byte, and a
+    root name may be that pointer alone."""
+    out = bytearray(model_header(model))
+    known = {}
+    pointers = []
+
+    def write_name(labels):
+        split = None
+        for i in range(len(labels) + 1):
+            suffix = tuple(labels[i:])
+            if suffix in known and (suffix or point_root):
+                split = i
+                break
+        stop = len(labels) if split is None else split
+        for j in range(stop):
+            suffix = tuple(labels[j:])
+            if suffix not in known:
+                known[suffix] = len(out)
+            out.append(len(labels[j]))
+            out.extend(labels[j])
+        if split is None:
+            if tuple() not in known:
+                known[tuple()] = len(out)
+            out.append(0)
+        else:
+            pointers.append(len(out))
+            out.extend(pointer(known[tuple(labels[split:])]))
+
+    for labels, qt, qc in model["questions"]:
+        write_name(labels)
+        out += be16(qt) + be16(qc)
+    for section in ("answers", "authorities", "additionals"):
+        for labels, rt, rc, ttl, data in model[section]:
+            write_name(labels)
+            out += be16(rt) + be16(rc) + be32(ttl) + be16(len(data)) + bytes(data)
+    return bytes(out), pointers
+
+
+def suffix_models():
+    """Models whose names share suffixes, so the compressor
+    has pointers to write."""
+    base = [b"example", b"com"]
+    models = []
+    m = qmodel(0x6001, RESPONSE, [([b"www"] + base, 1, 1), (base, 1, 1)])
+    m["answers"] = [
+        ([b"www"] + base, 1, 1, 300, bytes([10, 0, 0, 1])),
+        (base, 2, 1, 300, name_bytes([b"ns", b"example", b"com"])),
+    ]
+    m["additionals"] = [([b"ns"] + base, 1, 1, 300, bytes([10, 0, 0, 2]))]
+    models.append(m)
+    m = qmodel(0x6002, QUERY, [([b"a", b"b", b"c"], 1, 1),
+                               ([b"b", b"c"], 1, 1),
+                               ([b"c"], 1, 1),
+                               ([], 1, 1)])
+    models.append(m)
+    return models
+
+
+def compressed_docs(models):
+    """The compressed form of each model: every second one may
+    point at the root. Returns (bytes, pointer offsets) pairs."""
+    return [compress_message(m, point_root=(i % 2 == 1))
+            for i, m in enumerate(models)]
+
+
+def run_compressed(models, docs, op):
+    tally = Tally()
+    answers, problems = ask_all([request(op, d) for d, _ in docs])
+    tally.failures += problems
+    for i, (model, (data, _), answer) in enumerate(zip(models, docs, answers)):
+        tally.inputs += 1
+        tally.seen.append((data, op, answer))
+        want = (
+            "ok:" + codes(model_bytes(model))
+            if op == "parse"
+            else "ok:" + codes(summary(model).encode("ascii"))
+        )
+        if answer == want:
+            tally.agreements += 1
+        else:
+            tally.failures.append(
+                f"compressed {i} {op}: want {want[:100]}, got {str(answer)[:100]}"
+            )
+    return tally
+
+
+def pointer_mutations(docs, rng):
+    """Mutations of the compressed messages at their pointers.
+    For each pointer: retarget it at itself, two bytes on, a
+    random earlier offset (which can land in the header, inside
+    a label, or on another pointer), a random later offset, and
+    past the end of the message (0x3FFF); cut the message short
+    inside it; and turn its first byte into each reserved form
+    (top bits 01 and 10). Returns (label, bytes) pairs."""
+    out = []
+    for n, (data, pointers) in enumerate(docs):
+        for p in pointers:
+            def retarget(t, kind):
+                m = bytearray(data)
+                m[p] = 0xC0 | (t >> 8)
+                m[p + 1] = t & 0xFF
+                out.append((f"compressed {n} pointer at {p} {kind}", bytes(m)))
+
+            retarget(p, "to itself")
+            retarget(p + 2, "two bytes on")
+            retarget(rng.randrange(0, p), "back to a random offset")
+            if p + 2 < len(data):
+                retarget(rng.randrange(p + 2, len(data)), "on to a random offset")
+            retarget(0x3FFF, "past the end")
+            out.append((f"compressed {n} cut inside the pointer at {p}", data[: p + 1]))
+            for form in (0x40, 0x80):
+                m = bytearray(data)
+                m[p] = form | (data[p] & 0x3F)
+                out.append((f"compressed {n} pointer at {p} as form {form:#04x}", bytes(m)))
+    return out
+
+
+def run_pointer_mutations(docs, seed):
+    tally = Tally()
+    cases = pointer_mutations(docs, random.Random(seed + 2))
+    answers, problems = ask_all([request("parse", d) for _, d in cases])
+    tally.failures += problems
+    for (label, data), answer in zip(cases, answers):
+        tally.check(data, answer, f"mutation {label}")
+    return tally
+
+
+def follows_pointer(data):
+    """Whether the strict reading of `data` follows at least one
+    pointer, whether the message is then accepted or not."""
+    stats = {}
+    oracle_parse(data, stats)
+    return stats.get("hops", 0) > 0
+
+
+def dnspython_names_read(data):
+    """Read a message with dnspython's wire parser and name
+    reader. The layout is RFC 1035 section 4.1, written here:
+    the twelve header bytes, then the four sections, each name
+    read by dns.name.from_wire_parser, record data held opaque,
+    and nothing after the last record (dnspython's message
+    reader refuses trailing bytes too). The header is read as
+    dnspython's message reader reads it: no flag bit is
+    refused. Returns a model, or None when dnspython raises."""
+    try:
+        parser = dns.wirebase.Parser(data)
+        mid, f, qd, an, ns, ar = parser.get_struct("!HHHHHH")
+        flags = (
+            f >> 15, (f >> 11) & 15, (f >> 10) & 1, (f >> 9) & 1,
+            (f >> 8) & 1, (f >> 7) & 1, f & 15, (f >> 5) & 1, (f >> 4) & 1,
+        )
+
+        def name():
+            return [bytes(lab) for lab in dns.name.from_wire_parser(parser).labels[:-1]]
+
+        questions = []
+        for _ in range(qd):
+            labels = name()
+            qt, qc = parser.get_struct("!HH")
+            questions.append((labels, qt, qc))
+        sections = {}
+        for key, count in (("answers", an), ("authorities", ns),
+                           ("additionals", ar)):
+            records = []
+            for _ in range(count):
+                labels = name()
+                rt, rc, ttl, rdlen = parser.get_struct("!HHIH")
+                records.append((labels, rt, rc, ttl, parser.get_bytes(rdlen)))
+            sections[key] = records
+        if parser.remaining() != 0:
+            return None
+    except dns.exception.DNSException:
+        return None
+    return {"id": mid, "flags": flags, "questions": questions, **sections}
+
+
+def parse_answer(model):
+    """The `parse` answer the tool gives for a model, or for None."""
+    return "none" if model is None else "ok:" + codes(model_bytes(model))
+
+
+def message_view(model):
+    """What the message judge compares: the identifier, the
+    flags, the questions, and each record's name, type, class
+    and TTL. OPT records (type 41) are left out, since
+    dnspython moves them out of the additional section into its
+    EDNS fields."""
+    if model is None:
+        return None
+
+    def recs(rs):
+        return [(r[0], r[1], r[2], r[3]) for r in rs if r[1] != 41]
+
+    return (model["id"], model["flags"], model["questions"],
+            recs(model["answers"]), recs(model["authorities"]),
+            recs(model["additionals"]))
+
+
+def dnspython_message_view(data):
+    """dns.message.from_wire's reading of `data`, as a
+    message_view, or None when it raises."""
+    try:
+        msg = dns.message.from_wire(data, one_rr_per_rrset=True)
+    except dns.exception.DNSException:
+        return None
+    f = msg.flags
+    flags = (
+        f >> 15, (f >> 11) & 15, (f >> 10) & 1, (f >> 9) & 1,
+        (f >> 8) & 1, (f >> 7) & 1, f & 15, (f >> 5) & 1, (f >> 4) & 1,
+    )
+
+    def labels(n):
+        return [bytes(lab) for lab in n.labels[:-1]]
+
+    def recs(section):
+        return [(labels(rr.name), rr.rdtype, rr.rdclass, rr.ttl)
+                for rr in section for _ in rr if rr.rdtype != 41]
+
+    return (msg.id, flags,
+            [(labels(q.name), q.rdtype, q.rdclass) for q in msg.question],
+            recs(msg.answer), recs(msg.authority), recs(msg.additional))
+
+
+def summary_model(answer):
+    """The model a `sections` answer reports, read back from its
+    summary text, or None for `none`. Raises ValueError when the
+    answer is not a summary: the model read back must give the
+    same text again."""
+    if answer == "none":
+        return None
+    if answer is None or not answer.startswith("ok:"):
+        raise ValueError(str(answer)[:80])
+    text = bytes(int(c) for c in answer[3:].split(",")).decode("ascii")
+    keys = ["id", "qr", "opcode", "aa", "tc", "rd", "ra", "ad", "cd",
+            "rcode", "qd", "an", "ns", "ar", "q", "a", "s", "t"]
+    parts = text.split(";")
+    if len(parts) != len(keys) or any(
+        not p.startswith(k + "=") for p, k in zip(parts, keys)
+    ):
+        raise ValueError(text[:80])
+    f = {k: p[len(k) + 1:] for k, p in zip(keys, parts)}
+
+    def name(t):
+        if t == "ROOT":
+            return []
+        return [bytes(int(c) for c in lab.split("-")) for lab in t.split(".")]
+
+    def entries(t):
+        return t.split("|") if t else []
+
+    def question(e):
+        n, qt, qc = e.split("/")
+        return (name(n), int(qt), int(qc))
+
+    def record(e):
+        n, rt, rc, ttl, data = e.split("/")
+        return (name(n), int(rt), int(rc), int(ttl),
+                bytes(int(c) for c in data.split(",")) if data else b"")
+
+    model = {
+        "id": int(f["id"]),
+        "flags": tuple(int(f[k]) for k in ("qr", "opcode", "aa", "tc", "rd",
+                                           "ra", "rcode", "ad", "cd")),
+        "questions": [question(e) for e in entries(f["q"])],
+        "answers": [record(e) for e in entries(f["a"])],
+        "authorities": [record(e) for e in entries(f["s"])],
+        "additionals": [record(e) for e in entries(f["t"])],
+    }
+    if summary(model) != text:
+        raise ValueError(text[:80])
+    return model
+
+
+def explain(data, want, oracle_view):
+    """The smallest set of named rules under which the strict
+    oracle's reading of `data`, seen through `oracle_view`,
+    equals `want`, dnspython's; None when no set does."""
+    names = sorted(NAMED_RULES)
+    subsets = [frozenset()]
+    for n in names:
+        subsets += [sub | {n} for sub in subsets]
+    for sub in sorted(subsets, key=len):
+        if sub and oracle_view(oracle_parse(data, rules=sub)) == want:
+            return sub
+    return None
+
+
+class Judge:
+    """A dnspython judge's tally: inputs judged, agreements, and
+    the differences, named or not."""
+
+    def __init__(self):
+        self.judged = 0
+        self.agree = 0
+        self.named = {}
+        self.unnamed = []
+
+    def judge(self, data, tool_view, want, oracle_view, label):
+        self.judged += 1
+        if tool_view == want:
+            self.agree += 1
+            return
+        # A difference is named only when the tool gives the
+        # strict oracle's answer and the oracle, with named rules
+        # changed, gives dnspython's.
+        rules = None
+        if oracle_view(oracle_parse(data)) == tool_view:
+            rules = explain(data, want, oracle_view)
+        if rules is None:
+            self.unnamed.append(f"{label}: dnspython {str(want)[:80]},"
+                                f" tool {str(tool_view)[:80]}")
+        else:
+            key = " and ".join(sorted(rules))
+            self.named[key] = self.named.get(key, 0) + 1
+
+
+def run_name_judge(tallies):
+    """Judge every `parse` input with dnspython's name reader."""
+    j = Judge()
+    for _, t in tallies:
+        for data, op, answer in t.seen:
+            if op != "parse" or answer is None:
+                continue
+            want = parse_answer(dnspython_names_read(data))
+            j.judge(data, answer, want, parse_answer, f"name judge {data.hex()[:60]}")
+    return j
+
+
+def run_message_judge():
+    """Judge the fixed cases, accepted and refused, with
+    dns.message.from_wire. The tool's reading is its own
+    `sections` answer for each case, read back from the summary
+    text, which shows the flags by name."""
+    j = Judge()
+    cases = [(label, data) for label, data in fixed_cases()]
+    cases += [(label, data) for label, data, _ in full_fixed_cases()]
+    cases += rejection_cases()
+    answers, problems = ask_all([request("sections", d) for _, d in cases])
+    for (label, data), answer in zip(cases, answers):
+        try:
+            tool = message_view(summary_model(answer))
+        except ValueError:
+            tool = ("not a summary", str(answer)[:80])
+        want = dnspython_message_view(data)
+        j.judge(data, tool, want, message_view, f"message judge {label}")
+    j.unnamed += [f"message judge: {p}" for p in problems]
+    return j
 
 
 MALFORMED = [
@@ -499,6 +1537,11 @@ MALFORMED = [
     "parse 999999999999999999999",
     "parse 01x",
     "PARSE 1",
+    "sections 256",
+    "sections x",
+    "sections 1,,2",
+    "section 1",
+    "sections 1 2",
 ]
 
 
@@ -536,44 +1579,158 @@ def main():
             return 1
 
     fixed = run_fixed()
+    fixed_s = run_fixed_sections()
     rand = run_random(args.seed, args.count)
     mut = run_mutations()
+    ffp = run_full_fixed("parse")
+    ffs = run_full_fixed("sections")
+    rej = run_rejections()
+    rfp, models = run_random_full(args.seed, 300, "parse")
+    rfs, _ = run_random_full(args.seed, 300, "sections")
+    comp_models = models + suffix_models()
+    comp_docs = compressed_docs(comp_models)
+    comp_p = run_compressed(comp_models, comp_docs, "parse")
+    comp_s = run_compressed(comp_models, comp_docs, "sections")
+    comp_mut = run_pointer_mutations(comp_docs, args.seed)
     malf = run_malformed()
-    dp_checks, dp_failures = dnspython_crosschecks()
 
-    failures = fixed.failures + rand.failures + mut.failures + malf.failures + dp_failures
-    total_in = fixed.inputs + rand.inputs + mut.inputs
-    total_agree = fixed.agreements + rand.agreements + mut.agreements
+    tallies = [
+        ("Slice 1 fixed cases, parse", fixed),
+        ("Slice 1 fixed cases, sections", fixed_s),
+        ("Slice 1 random well formed messages", rand),
+        ("Slice 1 mutations (every truncation, every single byte flip, targeted)", mut),
+        ("Full fixed cases, parse", ffp),
+        ("Full fixed cases, sections", ffs),
+        ("Full rejections (parse and sections)", rej),
+        ("Random whole messages, parse", rfp),
+        ("Random whole messages, sections", rfs),
+        ("Compressed random and suffix messages, parse", comp_p),
+        ("Compressed random and suffix messages, sections", comp_s),
+        ("Mutations of the compressed messages at their pointers, parse", comp_mut),
+        ("Malformed requests, answered error", malf),
+    ]
+    failures = []
+    for _, t in tallies:
+        failures += t.failures
+    total_in = sum(t.inputs for _, t in tallies)
+    total_agree = sum(t.agreements for _, t in tallies)
+    with_pointer = sum(follows_pointer(d) for _, t in tallies for d, _, _ in t.seen)
+    comp_with_pointer = sum(1 for _, ptrs in comp_docs if ptrs)
+    comp_pointers = sum(len(ptrs) for _, ptrs in comp_docs)
+
+    judges = []
+    if DNSPYTHON:
+        judges = [
+            ("Name judge: dnspython's wire parser and name reader on every"
+             " `parse` input", run_name_judge(tallies)),
+            ("Message judge: `dns.message.from_wire` on the fixed and"
+             " rejection cases", run_message_judge()),
+        ]
+        for _, j in judges:
+            failures += j.unnamed
 
     lean_ver = subprocess.run(
         ["lake", "env", "lean", "--version"],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=120,
     ).stdout.strip()
 
+    oracle = (
+        "the strict reading of SPEC.md in tests/run_tests.py, on Python "
+        + platform.python_version()
+    )
+    if DNSPYTHON:
+        oracle += f"; cross-checked against dnspython {DNSPYTHON}, counted apart"
+    else:
+        oracle += "; dnspython not installed, so no cross check ran"
     lines = [
         "# Test results",
         "",
-        "Written by `tests/run_tests.py`. Rerun it to check these numbers.",
+        "Written by `python3 tests/run_tests.py`, which builds the tool with",
+        "`lake build`, sends each input to it, and compares each answer with",
+        "the strict oracle's. Rerun it to check these numbers.",
         "",
-        "- Oracle: a strict reading of the plan rules written in the harness"
-        " (Python 3.12.3), plus hand-built fixed cases from RFC 1035",
-        f"- dnspython: {'present, cross checks run' if DNSPYTHON else 'not present in this environment, no cross check run'}",
-        f"- Lean: {lean_ver}",
+        f"- Oracle: {oracle}",
         f"- Seed: {args.seed}",
-        f"- Fixed cases: {fixed.agreements} of {fixed.inputs} agreements",
-        f"- Random well formed messages: {rand.agreements} of {rand.inputs} agreements",
-        f"- Mutations (every truncation, every single byte flip, targeted): {mut.agreements} of {mut.inputs} agreements",
-        f"- Malformed requests answered error: {malf.agreements} of {malf.inputs}",
-        f"- dnspython cross checks: {dp_checks} run, {len(dp_failures)} failures"
-        if DNSPYTHON else "- dnspython cross checks: 0 run (module absent)",
-        f"- Differential inputs: {total_in}",
-        f"- Differential agreements: {total_agree}",
-        "- Named differences: none",
+        f"- Inputs: {total_in}",
         f"- Failures: {len(failures)}",
+        f"- Lean: {lean_ver}",
+        "",
+        "Inputs by section, with the answers that agree with the oracle:",
         "",
     ]
+    for label, t in tallies:
+        lines.append(f"  - {label}: {t.agreements} of {t.inputs}")
+    lines += [
+        "",
+        f"In all, {total_agree} of {total_in} answers agree.",
+        "",
+        "Pointers:",
+        "",
+        f"  - Compressed messages holding a pointer: {comp_with_pointer} of"
+        f" {len(comp_docs)}, {comp_pointers} pointers in all",
+        f"  - Inputs whose reading follows at least one pointer: {with_pointer}"
+        f" of {total_in}",
+        "",
+        "## Cross-check against dnspython",
+        "",
+        "The oracle above is written in this project, from SPEC.md. dnspython,",
+        "written apart from it, judges the tool's answers where it can be",
+        "imported (`pip install dnspython`). Its checks are counted apart, not",
+        "in Inputs, so a run with or without it records the same Inputs.",
+        "",
+        "- The name judge reads each `parse` input with dnspython's own wire",
+        "  parser and name reader, `dns.wirebase.Parser` and",
+        "  `dns.name.from_wire_parser`, in the message layout of RFC 1035",
+        "  section 4.1 written in the harness, with record data held opaque, as",
+        "  this layer holds it. dnspython's reading, printed as the tool",
+        "  prints, or `none` when dnspython raises, is compared with the tool's",
+        "  `parse` answer for that input.",
+        "- The message judge reads the fixed and rejection cases with",
+        "  `dns.message.from_wire`, which also reads record data by type, and",
+        "  compares its reading with the tool's `sections` answer for each",
+        "  case, read back from the summary text: the identifier, the flags",
+        "  by name, the questions, and each record's name, type, class and",
+        "  TTL. It runs on those cases only, since that reader also refuses",
+        "  record data that is not well formed for its type, and handles OPT",
+        "  and TSIG records and the UPDATE opcode by their own rules, none of",
+        "  which this layer reads.",
+        "",
+        "A disagreement is a named difference when the strict oracle, with the",
+        "named rules changed to read as dnspython reads, gives dnspython's",
+        "answer. Any other disagreement is a failure, counted above.",
+        "",
+    ]
+    if DNSPYTHON:
+        named = {}
+        for label, j in judges:
+            lines.append(
+                f"- {label}: {j.judged} judged, {j.agree} agree,"
+                f" {sum(j.named.values())} named differences,"
+                f" {len(j.unnamed)} unnamed"
+            )
+            for key, n in j.named.items():
+                named[key] = named.get(key, 0) + n
+        if named:
+            lines.append(
+                "- Named differences: "
+                + "; ".join(f"{k}: {n} input{'s' if n != 1 else ''}"
+                            for k, n in sorted(named.items()))
+            )
+        else:
+            lines.append("- Named differences: none")
+        lines += ["", "The named rules:", ""]
+        for key in sorted(NAMED_RULES):
+            lines.append(f"  - {key}: {NAMED_RULES[key]}.")
+    else:
+        lines.append(
+            "- dnspython is not installed here, so neither judge ran and no"
+            " difference was computed."
+        )
+        lines.append("- Named differences: not computed")
+    lines.append("")
     if failures:
         lines.append("## Failures")
+        lines.append("")
         lines += [f"- {f}" for f in failures[:40]]
         lines.append("")
     RESULTS.write_text("\n".join(lines))

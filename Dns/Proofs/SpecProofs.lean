@@ -1,0 +1,279 @@
+/-
+  Proofs of the statements in `Dns/Spec.lean`, under the same
+  names.
+
+  The round trips are the theorems proved in
+  `Dns/Proofs/RoundTrip.lean`. The refusals are single inputs,
+  checked in the kernel with `decide +kernel`: no native
+  evaluation, which the bar forbids.
+-/
+
+import Dns
+import Dns.Spec.Defs
+import Dns.Proofs.RoundTrip
+
+open Dns Dns.Spec
+
+theorem Dns.Spec.parse_print {m : Message} (hw : WF m) :
+    parse (print m) = some m :=
+  Dns.Proofs.parse_print hw
+
+theorem Dns.Spec.parse_print_question_only {h : Header}
+    {qs : List Question} (hh : WFHeader h)
+    (hq : ∀ q ∈ qs, WFQuestion q)
+    (hlen : qs.length < 65536) :
+    parse (print ⟨h, qs, [], [], []⟩) =
+      some ⟨h, qs, [], [], []⟩ :=
+  Dns.Proofs.parse_print_question_only hh hq hlen
+
+
+theorem Dns.Spec.parseHeader_fields
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    (hz : (f2.toNat / 64) % 2 = 0) :
+    parseHeader (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) =
+      some ({ id := i1.toNat * 256 + i2.toNat,
+              qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+              aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+              rd := f1.toNat % 2,
+              ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+              cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 },
+        q1.toNat * 256 + q2.toNat, a1.toNat * 256 + a2.toNat,
+        n1.toNat * 256 + n2.toNat, r1.toNat * 256 + r2.toNat, rest) := by
+  rw [Dns.Proofs.parseHeader_step, ite_eq_left hz]
+  rfl
+
+theorem Dns.Spec.rejects_z_bit (i1 i2 f1 f2 : UInt8) (rest : List UInt8)
+    (hz : (f2.toNat / 64) % 2 = 1) :
+    parse (i1 :: i2 :: f1 :: f2 :: rest) = none := by
+  have hh : parseHeader (i1 :: i2 :: f1 :: f2 :: rest) = none := by
+    match rest with
+    | q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest =>
+      rw [Dns.Proofs.parseHeader_step, ite_eq_right (by omega)]
+    | [] | [_] | [_, _] | [_, _, _] | [_, _, _, _] | [_, _, _, _, _]
+    | [_, _, _, _, _, _] | [_, _, _, _, _, _, _] => rfl
+  show (parseHeader (i1 :: i2 :: f1 :: f2 :: rest) >>= _) = none
+  rw [hh]
+  rfl
+
+namespace Dns.Proofs
+
+/-- A question list read with count `n` holds `n` questions. -/
+theorem parseQuestionsIn_length : ∀ (n : Nat) (full bs : List UInt8)
+    (qs : List Question) (r : List UInt8),
+    parseQuestionsIn n full bs = some (qs, r) → qs.length = n
+  | 0, _, _, qs, r, h => by
+    simp only [parseQuestionsIn, Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1]; rfl
+  | n + 1, full, bs, qs, r, h => by
+    simp only [parseQuestionsIn, bind, Option.bind_eq_some_iff] at h
+    obtain ⟨⟨q, rest⟩, _, ⟨qs', r'⟩, hr, he⟩ := h
+    simp only [Option.some.injEq, Prod.mk.injEq] at he
+    rw [← he.1, List.length_cons, parseQuestionsIn_length n full rest qs' r' hr]
+
+/-- A record list read with count `n` holds `n` records. -/
+theorem parseRecordsIn_length : ∀ (n : Nat) (full bs : List UInt8)
+    (rs : List Record) (r : List UInt8),
+    parseRecordsIn n full bs = some (rs, r) → rs.length = n
+  | 0, _, _, rs, r, h => by
+    simp only [parseRecordsIn, Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1]; rfl
+  | n + 1, full, bs, rs, r, h => by
+    simp only [parseRecordsIn, bind, Option.bind_eq_some_iff] at h
+    obtain ⟨⟨x, rest⟩, _, ⟨rs', r'⟩, hr, he⟩ := h
+    simp only [Option.some.injEq, Prod.mk.injEq] at he
+    rw [← he.1, List.length_cons, parseRecordsIn_length n full rest rs' r' hr]
+
+end Dns.Proofs
+
+theorem Dns.Spec.parse_reads_header
+    (i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 : UInt8) (rest : List UInt8)
+    {m : Message}
+    (hm : parse (i1 :: i2 :: f1 :: f2 ::
+      q1 :: q2 :: a1 :: a2 :: n1 :: n2 :: r1 :: r2 :: rest) = some m) :
+    m.header = { id := i1.toNat * 256 + i2.toNat,
+                 qr := f1.toNat / 128, opcode := (f1.toNat / 8) % 16,
+                 aa := (f1.toNat / 4) % 2, tc := (f1.toNat / 2) % 2,
+                 rd := f1.toNat % 2,
+                 ra := f2.toNat / 128, ad := (f2.toNat / 32) % 2,
+                 cd := (f2.toNat / 16) % 2, rcode := f2.toNat % 16 } ∧
+    m.questions.length = q1.toNat * 256 + q2.toNat ∧
+    m.answers.length = a1.toNat * 256 + a2.toNat ∧
+    m.authorities.length = n1.toNat * 256 + n2.toNat ∧
+    m.additionals.length = r1.toNat * 256 + r2.toNat := by
+  by_cases hz : (f2.toNat / 64) % 2 = 0
+  · simp only [parse,
+      Dns.Spec.parseHeader_fields i1 i2 f1 f2 q1 q2 a1 a2 n1 n2 r1 r2 rest hz,
+      bind, Option.bind_eq_some_iff, Option.bind_some] at hm
+    obtain ⟨⟨qs, s1⟩, hq, ⟨ans, s2⟩, ha, ⟨aus, s3⟩, hs, ⟨ads, s4⟩, ht, he⟩ := hm
+    by_cases hr : s4 = []
+    · simp only [hr, ite_true, Option.some.injEq] at he
+      subst he
+      exact ⟨rfl, Dns.Proofs.parseQuestionsIn_length _ _ _ _ _ hq,
+        Dns.Proofs.parseRecordsIn_length _ _ _ _ _ ha,
+        Dns.Proofs.parseRecordsIn_length _ _ _ _ _ hs,
+        Dns.Proofs.parseRecordsIn_length _ _ _ _ _ ht⟩
+    · simp only [hr, ite_false] at he
+      cases he
+  · rw [Dns.Spec.rejects_z_bit i1 i2 f1 f2 _ (by omega)] at hm
+    cases hm
+
+theorem Dns.Spec.reads_rfc_4_1_4 :
+    parse ([18, 52, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      1, 70, 3, 73, 83, 73, 4, 65, 82, 80, 65, 0,
+      0, 1, 0, 1, 3, 70, 79, 79, 192, 12, 0, 1,
+      0, 1] : List UInt8) =
+      some { header := { id := 4660, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 },
+                           { name := [[70, 79, 79], [70], [73, 83, 73], [65, 82, 80, 65]],
+                             qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := by
+  decide +kernel
+
+theorem Dns.Spec.rejects_pointer_self :
+    (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+      192, 12, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_pointer_forward :
+    (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      192, 18, 0, 1, 0, 1, 5, 108, 97, 116, 101, 114,
+      0, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_pointer_past_end :
+    (parse ([0, 7, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+      195, 255, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_pointer_onto_reserved_form :
+    (parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      3, 97, 98, 99, 0, 0, 1, 0, 1, 192, 14, 0,
+      1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+theorem Dns.Spec.reads_pointer_mid_label :
+    parse ([0, 7, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+      3, 97, 1, 120, 0, 0, 1, 0, 1, 192, 14, 0,
+      1, 0, 1] : List UInt8) =
+      some { header := { id := 7, qr := 0, opcode := 0, aa := 0, tc := 0,
+                         rd := 1, ra := 0, ad := 0, cd := 0, rcode := 0 },
+             questions := [{ name := [[97, 1, 120]], qtype := 1, qclass := 1 },
+                           { name := [[120]], qtype := 1, qclass := 1 }],
+             answers := [], authorities := [], additionals := [] } := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_reserved_in_record :
+    (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
+      1, 120, 0, 0, 1, 0, 1, 64, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0] : List UInt8)).isSome = false := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_data_past_end :
+    (parse ([0, 7, 128, 128, 0, 1, 0, 1, 0, 0, 0, 0,
+      1, 120, 0, 0, 1, 0, 1, 1, 121, 0, 0, 1,
+      0, 1, 0, 0, 0, 0, 0, 10, 97, 98, 99] : List UInt8)).isSome = false := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_chain_over_255 :
+    (parse ([0, 7, 1, 0, 0, 5, 0, 0, 0, 0, 0, 0,
+      60, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+      97, 0, 0, 1, 0, 1, 60, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98, 98,
+      98, 98, 98, 98, 98, 98, 98, 192, 12, 0, 1, 0,
+      1, 60, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+      99, 99, 192, 78, 0, 1, 0, 1, 60, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100, 100, 100, 100, 100, 192, 145, 0,
+      1, 0, 1, 60, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101, 101,
+      101, 101, 101, 101, 192, 212, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+
+theorem Dns.Spec.rejects_pointer_cycle_through_label :
+    (parse ([0, 0, 0, 0, 0, 4, 97, 98, 99, 100, 192, 5,
+      192, 5, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel
+
+theorem Dns.Spec.accepts_sixteen_hops :
+    (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
+      1, 0, 0, 0, 0, 0, 30, 192, 12, 192, 31, 192,
+      33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
+      45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
+      57, 192, 59, 255, 0, 0, 1, 0, 0, 0, 0, 0,
+      0] : List UInt8)).isSome = true := by
+  decide +kernel
+
+theorem Dns.Spec.rejects_seventeen_hops :
+    (parse ([0, 7, 128, 0, 0, 1, 0, 2, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 192, 12, 255, 0, 0,
+      1, 0, 0, 0, 0, 0, 32, 192, 12, 192, 31, 192,
+      33, 192, 35, 192, 37, 192, 39, 192, 41, 192, 43, 192,
+      45, 192, 47, 192, 49, 192, 51, 192, 53, 192, 55, 192,
+      57, 192, 59, 192, 61, 255, 0, 0, 1, 0, 0, 0,
+      0, 0, 0] : List UInt8)).isSome = false := by
+  decide +kernel
+
+theorem Dns.Spec.accepts_sixteen_hops_through_labels :
+    (parse ([0, 7, 1, 0, 0, 17, 0, 0, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
+      1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
+      100, 192, 27, 0, 1, 0, 1, 1, 101, 192, 35, 0,
+      1, 0, 1, 1, 102, 192, 43, 0, 1, 0, 1, 1,
+      103, 192, 51, 0, 1, 0, 1, 1, 104, 192, 59, 0,
+      1, 0, 1, 1, 105, 192, 67, 0, 1, 0, 1, 1,
+      106, 192, 75, 0, 1, 0, 1, 1, 107, 192, 83, 0,
+      1, 0, 1, 1, 108, 192, 91, 0, 1, 0, 1, 1,
+      109, 192, 99, 0, 1, 0, 1, 1, 110, 192, 107, 0,
+      1, 0, 1, 1, 111, 192, 115, 0, 1, 0, 1, 1,
+      112, 192, 123, 0, 1, 0, 1, 1, 113, 192, 131, 0,
+      1, 0, 1] : List UInt8)).isSome = true := by
+  decide +kernel
+
+theorem Dns.Spec.rejects_seventeen_hops_through_labels :
+    (parse ([0, 7, 1, 0, 0, 18, 0, 0, 0, 0, 0, 0,
+      1, 97, 0, 0, 1, 0, 1, 1, 98, 192, 12, 0,
+      1, 0, 1, 1, 99, 192, 19, 0, 1, 0, 1, 1,
+      100, 192, 27, 0, 1, 0, 1, 1, 101, 192, 35, 0,
+      1, 0, 1, 1, 102, 192, 43, 0, 1, 0, 1, 1,
+      103, 192, 51, 0, 1, 0, 1, 1, 104, 192, 59, 0,
+      1, 0, 1, 1, 105, 192, 67, 0, 1, 0, 1, 1,
+      106, 192, 75, 0, 1, 0, 1, 1, 107, 192, 83, 0,
+      1, 0, 1, 1, 108, 192, 91, 0, 1, 0, 1, 1,
+      109, 192, 99, 0, 1, 0, 1, 1, 110, 192, 107, 0,
+      1, 0, 1, 1, 111, 192, 115, 0, 1, 0, 1, 1,
+      112, 192, 123, 0, 1, 0, 1, 1, 113, 192, 131, 0,
+      1, 0, 1, 1, 114, 192, 139, 0, 1, 0, 1] : List UInt8)).isSome = false := by
+  decide +kernel

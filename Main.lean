@@ -5,12 +5,16 @@
   request is an operation and its input as comma-separated
   decimal byte codes.
 
-    parse 0,0,1,0,...   prints  ok:0,0,1,0,... or none
+    parse 0,0,1,0,...      prints  ok:0,0,1,0,... or none
+    sections 0,0,1,0,...   prints  ok:105,100,61,... or none
 
-  The one operation is `parse`. Its input is the byte codes of
-  a DNS message. Its answer is `ok:` and the byte codes of the
-  canonical reprint of the parsed message, or `none` when the
-  message is rejected.
+  Two operations take the byte codes of a DNS message. `parse`
+  answers `ok:` and the byte codes of the canonical reprint of
+  the parsed message. `sections` answers `ok:` and the byte
+  codes of the summary text SPEC.md defines: the identifier,
+  the header flags, the four section counts, and the entries
+  of the four sections, with every name expanded. Both answer `none` when
+  the message is rejected.
 
   A request is an operation, then optionally one space and its
   numbers; with no numbers after the space, the input is empty.
@@ -48,6 +52,53 @@ def toBytes (ns : List Nat) : Option (List UInt8) :=
 def showCodes (bs : List UInt8) : String :=
   ",".intercalate (bs.map fun b => toString b.toNat)
 
+/-- A name in the summary encoding: the word `ROOT` for the
+    root, or the labels in order, full stops between them, each
+    label written as its byte codes split by hyphens. -/
+def showName (nm : Name) : String :=
+  if nm.isEmpty then "ROOT"
+  else ".".intercalate
+    (nm.map fun l => "-".intercalate (l.map fun b => toString b.toNat))
+
+/-- One question in the summary encoding. -/
+def showQuestion (q : Question) : String :=
+  showName q.name ++ "/" ++ toString q.qtype ++ "/" ++ toString q.qclass
+
+/-- One record in the summary encoding. Its data is written as
+    byte codes split by commas. -/
+def showRecord (r : Record) : String :=
+  showName r.name ++ "/" ++ toString r.type ++ "/" ++ toString r.rclass ++
+    "/" ++ toString r.ttl ++ "/" ++ showCodes r.data
+
+/-- The summary of a message, in the encoding SPEC.md states:
+    the identifier, the header flags in the order of the third
+    and fourth header bytes, the four section counts, and the
+    entries of the four sections in order. -/
+def summary (m : Message) : String :=
+  "id=" ++ toString m.header.id ++
+    ";qr=" ++ toString m.header.qr ++
+    ";opcode=" ++ toString m.header.opcode ++
+    ";aa=" ++ toString m.header.aa ++
+    ";tc=" ++ toString m.header.tc ++
+    ";rd=" ++ toString m.header.rd ++
+    ";ra=" ++ toString m.header.ra ++
+    ";ad=" ++ toString m.header.ad ++
+    ";cd=" ++ toString m.header.cd ++
+    ";rcode=" ++ toString m.header.rcode ++
+    ";qd=" ++ toString m.questions.length ++
+    ";an=" ++ toString m.answers.length ++
+    ";ns=" ++ toString m.authorities.length ++
+    ";ar=" ++ toString m.additionals.length ++
+    ";q=" ++ "|".intercalate (m.questions.map showQuestion) ++
+    ";a=" ++ "|".intercalate (m.answers.map showRecord) ++
+    ";s=" ++ "|".intercalate (m.authorities.map showRecord) ++
+    ";t=" ++ "|".intercalate (m.additionals.map showRecord)
+
+/-- The byte codes of a summary text. Every character the
+    summary uses is plain ASCII, so each code is one byte. -/
+def stringCodes (s : String) : List UInt8 :=
+  s.toList.map fun c => c.toNat.toUInt8
+
 /-- The answer to one request, or `none` when the request is
     malformed. -/
 def answer (op : String) (ns : List Nat) : Option String :=
@@ -58,6 +109,13 @@ def answer (op : String) (ns : List Nat) : Option String :=
     | some bs =>
       match parse bs with
       | some v => some ("ok:" ++ showCodes (print v))
+      | none => some "none"
+  | "sections" =>
+    match toBytes ns with
+    | none => none
+    | some bs =>
+      match parse bs with
+      | some v => some ("ok:" ++ showCodes (stringCodes (summary v)))
       | none => some "none"
   | _ => none
 
